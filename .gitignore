@@ -1,0 +1,22 @@
+# -------------------------------------------------------
+# LaTeX build files
+# -------------------------------------------------------
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.idx
+*.ilg
+*.ind
+*.lof
+*.log
+*.lot
+*.out
+*.synctex.gz
+*.toc
+*.run.xml
+*.nav
+*.snm
+*.vrb
