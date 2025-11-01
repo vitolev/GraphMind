@@ -11,7 +11,7 @@ def setup_logging(config: Config) -> logging.Logger:
     logger.setLevel(logging.DEBUG)
     
     # File handler
-    fh = logging.FileHandler(config.log_dir / f"{config.experiment_name}.log")
+    fh = logging.FileHandler(config.log_dir / f"{config.experiment_name}.log", encoding="utf-8")
     fh.setLevel(logging.DEBUG)
     
     # Console handler
