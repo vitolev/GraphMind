@@ -12,7 +12,7 @@
 
 % to compile a preprint version, e.g., for submission to arXiv, add add the
 % [preprint] option:
-%     \usepackage[preprint]{neurips_2022}
+     \usepackage[preprint]{neurips_2022}
 
 
 % to compile a camera-ready version, add the [final] option, e.g.:
@@ -138,7 +138,7 @@ using graph similarity algorithms \cite{dwivedi2020algorithmsexactapproximateerr
 The \textit{GNN Block} functions as a surrogate model that predicts multi-agent system performance without requiring costly LLM evaluations. It takes as input the \textit{Graph Evaluation Dataset} \(\{(G_i, p_i)\}_{i=1}^{N}\) for training and \(K\) unevaluated candidate graphs from the generation block. It outputs a trained GNN model \(f_{\theta}: \mathcal{G} \rightarrow \mathbb{R}\), predicted performance values \(\{\hat{p}_1, \ldots, \hat{p}_K\}\), and a filtered subset of top-\(M\) graphs (typically \(M \ll K\)). The task is therefore graph prediction.
 
 The choice of GNN architecture is motivated by the strong dependency between agent interactions and their local neighborhood properties. In multi-agent reasoning systems, an agent's contribution depends critically on the types and features of agents it communicates with. We will primarily 
-focus on two attention-based architectures: Graph Attention Networks (GAT) \cite{veličković2018graphattentionnetworks} and Heterogeneous Graph Attention Networks (HetGAT) \cite{wang2021heterogeneousgraphattentionnetwork}. 
+focus on two attention-based architectures: Graph Attention Networks (GAT) \cite{vel} and Heterogeneous Graph Attention Networks (HetGAT) \cite{wang2021heterogeneousgraphattentionnetwork}. 
 
 For comparison, we also evaluate simpler baseline models including Graph Convolutional Networks (GCN) \cite{kipf2017semisupervisedclassificationgraphconvolutional}, which perform uniform neighborhood averaging, and GraphSAGE \cite{hamilton2018inductiverepresentationlearninglarge}, which uses sampling-based aggregation. These baselines allow us to quantify the benefit of attention mechanisms for this problem domain.
 

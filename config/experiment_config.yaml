@@ -1,0 +1,50 @@
+# Graph Generation
+num_graphs_per_iteration: 100000
+graph_templates:
+  - supervisor
+  - network
+  - hierarchical
+num_agents_min: 3
+num_agents_max: 20
+agent_roles:
+  - solver
+  - verifier
+  - coordinator
+
+# GNN Configuration
+gnn_hidden_dim: 128
+gnn_num_layers: 3
+gnn_num_heads: 8
+gnn_dropout: 0.1
+gnn_learning_rate: 0.001
+gnn_batch_size: 32
+gnn_epochs: 50
+gnn_device: cuda
+
+# Selection Strategy
+top_k_to_keep: 100
+eval_k_best: 50
+good_graphs_max_size: 1000
+
+# Evaluation
+num_eval_problems: 10
+problem_difficulties:
+  - easy
+  - medium
+  - hard
+eval_timeout_seconds: 30
+llm_model: gpt-4
+
+# Pipeline Control
+retrain_frequency: 10
+max_iterations: 1000
+checkpoint_frequency: 5
+
+# Paths
+save_dir: ./checkpoints
+log_dir: ./logs
+data_dir: ./data
+
+# Experiment Info
+experiment_name: gnn_multiagent_opt_v1
+seed: 42
