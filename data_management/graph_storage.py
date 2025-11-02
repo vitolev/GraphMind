@@ -84,6 +84,9 @@ def load_good_graphs_set(
             with open(set_path, 'rb') as f:
                 loaded = pickle.load(f)
             graph_set.graphs = loaded.get('graphs', [])
+            loaded_max_size = loaded.get('max_size', None)
+            if loaded_max_size != max_size:
+                logger.warning(f"Loaded good graphs set max_size {loaded_max_size} differs from config max_size {max_size}, using config value.")
             logger.info(f"Loaded good graphs set with {graph_set.size()} graphs from {set_path}")
         except Exception as e:
             logger.warning(f"Could not load good graphs set: {e}, starting fresh")

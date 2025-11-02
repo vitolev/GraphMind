@@ -47,7 +47,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     from gnn_models.model_manager import initialize_gnn_models
     from data_management.dataset_manager import load_training_dataset, save_training_dataset
     from evaluation.math_solver import load_math_problems
-    from data_management.graph_storage import GraphSet
+    from data_management.graph_storage import load_good_graphs_set
     
     # Initialize components
     logger.info("Initializing pipeline components...")
@@ -63,7 +63,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     
     # Initialize state
     state = PipelineState()
-    state.good_graph_set = GraphSet(max_size=config.good_graphs_max_size)
+    state.good_graph_set = load_good_graphs_set(config.data_dir, config.good_graphs_max_size, logger)
     
     logger.info(f"{'='*60}")
     logger.info("Configuration:")
@@ -347,7 +347,7 @@ def select_top_graphs(
     predictions: list
 ) -> list:
     """Select top-K graphs for evaluation"""
-    from data_management.graph_storage import add_to_graphs_set, select_for_evaluation
+    from data_management.graph_storage import add_to_graphs_set, select_for_evaluation, save_good_graphs_set
     
     # Sort by score
     sorted_preds = sorted(predictions, key=lambda x: x['score'], reverse=True)
@@ -366,6 +366,13 @@ def select_top_graphs(
     selected = select_for_evaluation(
         state.good_graph_set,
         config.eval_k_best,
+        logger
+    )
+
+    # Save updated good graphs set
+    save_good_graphs_set(
+        state.good_graph_set,
+        config.data_dir,
         logger
     )
     
