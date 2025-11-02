@@ -51,19 +51,22 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     
     # Initialize components
     logger.info("Initializing pipeline components...")
+
+    # Initialize state
+    state = PipelineState()
     
     # Initialize GNN models
     models = initialize_gnn_models(config, logger)
     
     # Load training dataset
     training_dataset = load_training_dataset(config.data_dir, logger)
+    state.training_dataset_size = training_dataset.size()
     
     # Load math problems
     math_problems = load_math_problems(config, logger)
     
-    # Initialize state
-    state = PipelineState()
-    state.good_graph_set = load_good_graphs_set(config.data_dir, config.good_graphs_max_size, logger)
+    # Load good graphs set
+    good_graphs_set = load_good_graphs_set(config.data_dir, config.good_graphs_max_size, logger)
     
     logger.info(f"{'='*60}")
     logger.info("Configuration:")
@@ -87,7 +90,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
             # Run single iteration
             metrics = run_single_iteration(
                 iteration_num, config, logger, state, 
-                models, training_dataset, math_problems
+                models, good_graphs_set, training_dataset, math_problems
             )
             
             # Log metrics
@@ -130,7 +133,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     logger.info(f"Total evaluations done: {state.total_evaluations_done}")
     logger.info(f"Final training dataset size: {state.training_dataset_size}")
     
-    # Save final state
+    # Save final training dataset
     save_training_dataset(training_dataset, config.data_dir, logger)
 
 # def run_pipeline(config: Config, logger: logging.Logger) -> None:
@@ -212,13 +215,17 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
 #     logger.info(f"Total evaluations done: {state.total_evaluations_done}")
 #     logger.info(f"Final training dataset size: {state.training_dataset_size}")
 
+from data_management.graph_storage import GraphSet
+from data_management.dataset_manager import TrainingDataset
+
 def run_single_iteration(
     iteration_num: int,
     config: Config,
     logger: logging.Logger,
     state: PipelineState,
     models: Dict[str, Any],
-    training_dataset: Any,
+    good_graphs_set: GraphSet,
+    training_dataset: TrainingDataset,
     math_problems: List[Dict[str, Any]]
 ) -> IterationMetrics:
     """
@@ -249,10 +256,10 @@ def run_single_iteration(
     # Step 3: Select best graphs
     logger.info(f"\n[Step 3/6] Selecting top {config.eval_k_best} graphs for evaluation...")
     selected_graphs = select_top_graphs(
-        config, logger, state, predictions
+        config, logger, state, predictions, good_graphs_set
     )
     logger.info(f"  ✓ Selected {len(selected_graphs)} graphs")
-    logger.info(f"  ✓ Good graphs set size: {state.good_graph_set.size()}")
+    logger.info(f"  ✓ Good graphs set size: {good_graphs_set.size()}")
     
     # Step 4: Evaluate selected graphs
     logger.info(f"\n[Step 4/6] Evaluating selected graphs with LLM...")
@@ -266,7 +273,7 @@ def run_single_iteration(
     
     # Step 5: Update training data
     logger.info(f"\n[Step 5/6] Updating training dataset...")
-    num_samples_added = update_training_data(config, logger, evaluation_results)
+    num_samples_added = update_training_data(config, logger, evaluation_results, training_dataset)
     state.training_dataset_size += num_samples_added
     logger.info(f"  ✓ Added {num_samples_added} samples to training data")
     
@@ -276,7 +283,7 @@ def run_single_iteration(
     
     if (iteration_num + 1) % config.retrain_frequency == 0:
         logger.info(f"\n[Step 6/6] Retraining GNN models...")
-        retrain_loss = retrain_gnn_models(config, logger, state)
+        retrain_loss = retrain_gnn_models(config, logger, state, training_dataset)
         gnn_retrained = True
         logger.info(f"  ✓ GNN retrained")
         logger.info(f"  ✓ Retrain loss: {retrain_loss:.4f}")
@@ -344,7 +351,8 @@ def select_top_graphs(
     config: Config,
     logger: logging.Logger,
     state: PipelineState,
-    predictions: list
+    predictions: list,
+    good_graphs_set: GraphSet
 ) -> list:
     """Select top-K graphs for evaluation"""
     from data_management.graph_storage import add_to_graphs_set, select_for_evaluation, save_good_graphs_set
@@ -357,21 +365,21 @@ def select_top_graphs(
 
     # Add top K graphs to good_graphs_set
     add_to_graphs_set(
-        state.good_graph_set,
+        good_graphs_set,
         top_k_graphs,
         logger
     )
     
     # Select eval_k_best for evaluation
     selected = select_for_evaluation(
-        state.good_graph_set,
+        good_graphs_set,
         config.eval_k_best,
         logger
     )
 
     # Save updated good graphs set
     save_good_graphs_set(
-        state.good_graph_set,
+        good_graphs_set,
         config.data_dir,
         logger
     )
@@ -381,20 +389,25 @@ def select_top_graphs(
 def update_training_data(
     config: Config,
     logger: logging.Logger,
-    evaluation_results: list
+    evaluation_results: list,
+    training_dataset: TrainingDataset
 ) -> int:
     """Add evaluation results to training dataset"""
-    from data_management.dataset_manager import add_samples_to_dataset, TrainingDataset
+    from data_management.dataset_manager import add_samples_to_dataset, save_training_dataset
     
-    if not hasattr(update_training_data, 'dataset'):
-        update_training_data.dataset = TrainingDataset()
-    
+    # Add samples to dataset
     num_added = add_samples_to_dataset(
-        update_training_data.dataset,
+        training_dataset,
         evaluation_results,
-        logger,
-        max_size=50000
+        logger
     )
+
+    # Save updated dataset
+    save_training_dataset(
+        training_dataset,
+        config.data_dir,
+        logger
+    )   
     
     return num_added
 

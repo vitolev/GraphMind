@@ -157,7 +157,6 @@ def add_samples_to_dataset(
     dataset: TrainingDataset,
     evaluation_results: List[Dict[str, Any]],
     logger: logging.Logger,
-    max_size: int = 50000
 ) -> int:
     """
     Add new samples to dataset and manage size
@@ -167,7 +166,6 @@ def add_samples_to_dataset(
         evaluation_results: New results from evaluation
                            List of {'graph': ..., 'actual_score': ...}
         logger: Logger
-        max_size: Maximum samples to keep
     
     Returns:
         Number of samples actually added
@@ -180,14 +178,6 @@ def add_samples_to_dataset(
     # Add samples
     num_added = dataset.add_samples(evaluation_results)
     logger.debug(f"Added {num_added} samples to training dataset")
-    
-    # Manage size
-    current_size = dataset.size()
-    if current_size > max_size:
-        # Remove oldest samples (keep newest)
-        num_to_remove = current_size - max_size
-        dataset.samples = dataset.samples[num_to_remove:]
-        logger.debug(f"Dataset size exceeded {max_size}, removed {num_to_remove} oldest samples")
     
     return num_added
 
