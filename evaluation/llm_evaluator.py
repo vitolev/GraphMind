@@ -46,7 +46,7 @@ def evaluate_selected_graphs(
         }
     """
     
-    logger.info(f"\n{'='*60}")
+    logger.info(f"{'='*60}")
     logger.info("LLM EVALUATION (PLACEHOLDER)")
     logger.info(f"{'='*60}")
     

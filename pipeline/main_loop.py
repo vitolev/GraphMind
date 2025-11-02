@@ -28,12 +28,9 @@ class PipelineState:
     total_graphs_generated: int = 0
     total_evaluations_done: int = 0
     training_dataset_size: int = 0
-    good_graphs_set: list = None  # Will be initialized to []
     iteration_history: list = None  # Will be initialized to []
     
     def __post_init__(self):
-        if self.good_graphs_set is None:
-            self.good_graphs_set = []
         if self.iteration_history is None:
             self.iteration_history = []
 
@@ -68,7 +65,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     state = PipelineState()
     state.good_graph_set = GraphSet(max_size=config.good_graphs_max_size)
     
-    logger.info(f"\n{'='*60}")
+    logger.info(f"{'='*60}")
     logger.info("Configuration:")
     logger.info(f"  - Graphs per iteration: {config.num_graphs_per_iteration:,}")
     logger.info(f"  - Select top-K: {config.top_k_to_keep}")
@@ -82,7 +79,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
         state.current_iteration = iteration_num
         iteration_start = time.time()
         
-        logger.info(f"\n{'='*60}")
+        logger.info(f"{'='*60}")
         logger.info(f"ITERATION {iteration_num + 1}/{config.max_iterations}")
         logger.info(f"{'='*60}")
         
@@ -255,7 +252,7 @@ def run_single_iteration(
         config, logger, state, predictions
     )
     logger.info(f"  ✓ Selected {len(selected_graphs)} graphs")
-    logger.info(f"  ✓ Good graphs set size: {len(state.good_graphs_set)}")
+    logger.info(f"  ✓ Good graphs set size: {state.good_graph_set.size()}")
     
     # Step 4: Evaluate selected graphs
     logger.info(f"\n[Step 4/6] Evaluating selected graphs with LLM...")
@@ -350,24 +347,27 @@ def select_top_graphs(
     predictions: list
 ) -> list:
     """Select top-K graphs for evaluation"""
-    from data_management.graph_storage import update_good_graphs_set, GraphSet
+    from data_management.graph_storage import add_to_graphs_set, select_for_evaluation
     
     # Sort by score
     sorted_preds = sorted(predictions, key=lambda x: x['score'], reverse=True)
     
     # Add top K to good_graphs_set
     top_k_graphs = sorted_preds[:config.top_k_to_keep]
-    if not hasattr(state, 'good_graph_set'):
-        state.good_graph_set = GraphSet(max_size=config.good_graphs_max_size)
-    
-    update_good_graphs_set(
+
+    # Add top K graphs to good_graphs_set
+    add_to_graphs_set(
         state.good_graph_set,
         top_k_graphs,
         logger
     )
     
     # Select eval_k_best for evaluation
-    selected = sorted_preds[:config.eval_k_best]
+    selected = select_for_evaluation(
+        state.good_graph_set,
+        config.eval_k_best,
+        logger
+    )
     
     return selected
 

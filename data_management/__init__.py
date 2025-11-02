@@ -8,6 +8,8 @@ from .dataset_manager import (
 from .graph_storage import (
     load_good_graphs_set,
     save_good_graphs_set,
+    add_to_graphs_set,
+    select_for_evaluation,
 )
 
 __all__ = [
@@ -16,4 +18,6 @@ __all__ = [
     'add_samples_to_dataset',
     'load_good_graphs_set',
     'save_good_graphs_set',
+    'add_to_graphs_set',
+    'select_for_evaluation',
 ]

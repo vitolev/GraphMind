@@ -22,12 +22,22 @@ class GraphSet:
         self.max_size = max_size
     
     def add_graphs(self, new_graphs: List[Dict[str, Any]]) -> None:
-        """Add graphs to set"""
+        """Add graphs to set
+        TODO: avoid sorting on every addition if possible, as the existing graph list is already sorted
+        """
         self.graphs.extend(new_graphs)
+        # Sort by score (descending). For equal scores, newer graphs (later in list) come last.
+        self.graphs.sort(key=lambda g: g.get('score', float('-inf')), reverse=True)
     
     def get_all(self) -> List[Dict[str, Any]]:
         """Get all graphs"""
         return self.graphs
+    
+    def get_best_k_and_remove(self, k: int) -> List[Dict[str, Any]]:
+        """Get top-K graphs and remove them from the set"""
+        selected = self.graphs[:k]
+        self.graphs = self.graphs[k:]
+        return selected
     
     def size(self) -> int:
         """Get number of graphs"""
@@ -38,13 +48,9 @@ class GraphSet:
         return len(self.graphs) >= self.max_size
     
     def enforce_max_size(self) -> None:
-        """
-        Trim to max size if exceeded
-        
-        Strategy: Keep newest graphs (at end of list)
-        """
+        """Trim to max size if exceeded"""
         if len(self.graphs) > self.max_size:
-            self.graphs = self.graphs[-self.max_size:]
+            self.graphs = self.graphs[:self.max_size]
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -110,7 +116,7 @@ def save_good_graphs_set(
         logger.error(f"Failed to save good graphs set: {e}")
         raise
 
-def update_good_graphs_set(
+def add_to_graphs_set(
     graph_set: GraphSet,
     new_graphs: List[Dict[str, Any]],
     logger: logging.Logger
@@ -125,4 +131,23 @@ def update_good_graphs_set(
     """
     graph_set.add_graphs(new_graphs)
     graph_set.enforce_max_size()
-    logger.debug(f"Good graphs set updated, now has {graph_set.size()} graphs")
+    logger.debug(f"Good graphs set updated, now has {graph_set.size()} graphs.")
+
+def select_for_evaluation(
+    graph_set: GraphSet,
+    k: int,
+    logger: logging.Logger
+) -> List[Dict[str, Any]]:
+    """
+    Select top-K graphs for evaluation from good_graphs_set and remove them from the set.
+    
+    Args:
+        graph_set: GraphSet to select from
+        k: Number of graphs to select
+        logger: Logger
+    Returns:
+        List of selected graph dictionaries
+    """
+    selected_graphs = graph_set.get_best_k_and_remove(k)
+    logger.debug(f"Selected best {len(selected_graphs)} graphs for evaluation and removed them from the good graphs set.")
+    return selected_graphs
