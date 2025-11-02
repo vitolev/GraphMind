@@ -28,10 +28,6 @@ good_graphs_max_size: 1000
 
 # Evaluation
 num_eval_problems: 10
-problem_difficulties:
-  - easy
-  - medium
-  - hard
 eval_timeout_seconds: 30
 llm_model: gpt-4
 

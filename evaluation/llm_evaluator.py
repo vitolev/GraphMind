@@ -31,7 +31,7 @@ def evaluate_selected_graphs(
         selected_graphs: List of graphs to evaluate (GNN format)
                         Each has: {node_features, edge_index, original_id, ...}
         math_problems: List of math problems to solve
-                      Each has: {id, question, answer, difficulty, ...}
+                      Each has: {id, question, answer}
     
     Returns:
         List of evaluation results
@@ -66,7 +66,6 @@ def evaluate_selected_graphs(
     logger.debug(f"Problem details:")
     for i, problem in enumerate(math_problems[:3]):  # Log first 3
         logger.debug(f"  Problem {i}: id={problem['id']}, "
-                    f"difficulty={problem['difficulty']}, "
                     f"question_len={len(problem['question'])}")
     
     # PLACEHOLDER: Return random evaluation results

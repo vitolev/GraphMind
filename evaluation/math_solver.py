@@ -8,8 +8,10 @@ to evaluate multiagent systems.
 """
 
 import logging
+import numpy as np
 from typing import List, Dict, Any
 from pathlib import Path
+from datasets import load_dataset
 
 def load_math_problems(
     config,
@@ -29,21 +31,26 @@ def load_math_problems(
             'id': str,
             'question': str,
             'answer': str,
-            'difficulty': str,  # 'easy', 'medium', 'hard'
         }
     """
     
     logger.info(f"Loading {config.num_eval_problems} math problems...")
     
-    # Placeholder: Create synthetic math problems
-    problems = _create_synthetic_problems(
-        num_problems=config.num_eval_problems,
-        difficulties=config.problem_difficulties,
-        logger=logger
-    )
+    # Set seed for reproducibility
+    np.random.seed(config.seed)
+
+    start_int = np.random.randint(0, 10000 - config.num_eval_problems)
+    problems = load_dataset("nvidia/OpenMathInstruct-1", split=f"train[{start_int}:{start_int + config.num_eval_problems}]")
+
+    df = problems.to_pandas()
+    df = df[['question', 'expected_answer']]
+    df = df.rename(columns={'expected_answer': 'answer'})
+    df['id'] = df.index + start_int
+
+    # Convert to list of dicts
+    problems = df.to_dict(orient='records')
     
     logger.info(f"  ✓ Loaded {len(problems)} math problems")
-    logger.debug(f"    - Difficulties: {config.problem_difficulties}")
     
     return problems
 
