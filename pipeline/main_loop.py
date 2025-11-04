@@ -6,6 +6,7 @@ from datetime import datetime
 from config.settings import Config
 import numpy as np
 from typing import Any, Dict, List
+from data_management.graph_storage import GraphSet
 
 @dataclass
 class IterationMetrics:
@@ -34,16 +35,7 @@ class PipelineState:
         if self.iteration_history is None:
             self.iteration_history = []
 
-
-def run_pipeline(config: Config, logger: logging.Logger) -> None:
-    """
-    Main optimization loop
-    
-    Args:
-        config: Configuration object
-        logger: Logger object
-    """
-    
+def run_pipeline(config: Config, logger: logging.Logger) -> None:    
     from gnn_models.model_manager import initialize_gnn_model
     from data_management.dataset_manager import load_training_dataset, save_training_dataset
     from evaluation.math_solver import load_math_problems
@@ -60,7 +52,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     
     math_problems = load_math_problems(config, logger)
     
-    good_graphs_set = load_good_graphs_set(config.data_dir, logger)
+    good_graphs_set = load_good_graphs_set(config.data_dir, logger) # This is a GraphSet object that stores all the potential Graph objects
     
     logger.info(f"{'='*60}")
     logger.info("Configuration:")
@@ -100,17 +92,6 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
             
             # Store metrics
             state.iteration_history.append(metrics)
-            
-            # #TODO Check if you want this!
-            # # Checkpoint
-            # if (iteration_num + 1) % config.checkpoint_frequency == 0:
-            #     logger.info(f"\nSaving checkpoint at iteration {iteration_num + 1}...")
-            #     save_checkpoint(config, logger, state, iteration_num, training_dataset, models)
-            
-            # # Stop conditiongit 
-            # if should_stop(config, logger, state):
-            #     logger.info("Stopping criteria met")
-            #     break
                 
         except Exception as e:
             logger.error(f"Error in iteration {iteration_num}: {e}", exc_info=True)
@@ -126,9 +107,6 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     
     save_training_dataset(training_dataset, config.data_dir, logger)
 
-from data_management.graph_storage import GraphSet
-from data_management.dataset_manager import TrainingDataset
-
 def run_single_iteration(
     iteration_num: int,
     config: Config,
@@ -136,7 +114,7 @@ def run_single_iteration(
     state: PipelineState,
     model: Dict[str, Any],
     good_graphs_set: GraphSet,
-    training_dataset: TrainingDataset,
+    training_dataset: GraphSet,
     math_problems: List[Dict[str, Any]]
 ) -> IterationMetrics:
     """
@@ -147,30 +125,32 @@ def run_single_iteration(
     For this, we will have to change the dataclass and the return type accordingly.
     """
 
+    from graph_generation.graph_generation import generate_graph_batch
     from evaluation.llm_evaluator import evaluate_selected_graphs
     from data_management.graph_storage import select_top_graphs
     from gnn_models.model_manager import retrain_gnn_model
     
     logger.info(f"\n[Step 1/6] Generating {config.num_graphs_per_iteration:,} graphs...")
-    generated_graphs = generate_graph_batch(config, logger)
+    metrics, generated_graphs = generate_graph_batch(config, logger) # Generira GraphSet object with Graph objects inside
     logger.info(f"  ✓ Generated {len(generated_graphs)} graphs")
     state.total_graphs_generated += len(generated_graphs)
     
     logger.info(f"\n[Step 2/6] Running GNN predictions on all graphs...")
-    predictions = predict_batch_performance(config, logger, generated_graphs)
+    #Below should return metrics???
+    predictions = predict_batch_performance(config, logger, generated_graphs) # Input is list of Graph objects GraphSet.to_pyg() will be used to predict This function updates GraphSet objects to have paramets gnn_predic set
     best_predicted = max(p['score'] for p in predictions)
     logger.info(f"  ✓ Predictions complete")
     logger.info(f"  ✓ Best predicted score: {best_predicted:.4f}")
     
     logger.info(f"\n[Step 3/6] Selecting top {config.eval_k_best} graphs for evaluation...")
     selected_graphs = select_top_graphs(
-        config, logger, predictions, good_graphs_set)
+        config, logger, predictions, good_graphs_set) # pre-initialized good graph set object is filled with new predicted and filtered
     logger.info(f"  ✓ Selected {len(selected_graphs)} graphs")
     logger.info(f"  Best selected ")
     logger.info(f"  ✓ Good graphs set size: {good_graphs_set.size()}")
     
     logger.info(f"\n[Step 4/6] Evaluating selected graphs with LLM...")
-    evaluation_results = evaluate_selected_graphs(
+    evaluation_results = evaluate_selected_graphs( #Vzame baby-ja od merge_and_evaluate in tega evaluate-a
         config, logger, selected_graphs, math_problems)
     best_actual = max(r['actual_score'] for r in evaluation_results) if evaluation_results else 0.0
     logger.info(f"  ✓ Evaluated {len(evaluation_results)} graphs")
@@ -178,14 +158,13 @@ def run_single_iteration(
     state.total_evaluations_done += len(evaluation_results)
     
     logger.info(f"\n[Step 5/6] Updating training dataset...")
-    num_samples_added = update_training_data(config, logger, evaluation_results, training_dataset)
+    num_samples_added = update_training_data(config, logger, evaluation_results, training_dataset) #To je graphset
     state.training_dataset_size += num_samples_added
     logger.info(f"  ✓ Added {num_samples_added} samples to training data")
     
     gnn_retrained = False
     retrain_loss = None
     logger.info(f"\n[Step DEBUG/6] {training_dataset.size()} samples in training dataset")
-    #logger.info(f"[Step DEBUG/6] Containes in training dataset: {training_dataset.get_samples()[:5]} ")
     logger.info(f"\n[Step 6/6] Retraining GNN models...")
     model = retrain_gnn_model(config, logger, model, training_dataset) # Correct this to be the right data
     gnn_retrained = True
@@ -207,21 +186,6 @@ def run_single_iteration(
     )
     
     return metrics
-
-# ============================================================================
-# PLACEHOLDER FUNCTIONS (to be implemented in respective modules)
-#TODO Clean up all functions
-# ============================================================================
-def generate_graph_batch(config: Config, logger: logging.Logger) -> list:
-    """Generate N graphs using LangGraph templates"""
-    from graph_generation.langgraph_generator import generate_langgraph_variants
-    
-    graphs = generate_langgraph_variants(
-        num_graphs=config.num_graphs_per_iteration,
-        config=config,
-        logger=logger
-    )
-    return graphs
 
 def predict_batch_performance(
     config: Config,
@@ -254,7 +218,7 @@ def update_training_data(
     config: Config,
     logger: logging.Logger,
     evaluation_results: list,
-    training_dataset: TrainingDataset
+    training_dataset: GraphSet
 ) -> int:
     """Add evaluation results to training dataset"""
     from data_management.dataset_manager import add_samples_to_dataset, save_training_dataset

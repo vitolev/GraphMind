@@ -1,12 +1,13 @@
 # Graph Generation
-num_graphs_per_iteration: 100000
-graph_templates:
-  - supervisor
-  - network
-  - hierarchical
-num_agents_min: 3
-num_agents_max: 20
-agent_roles:
+num_graphs_per_iteration: 10000
+generation_strategy: random
+agent_types:
+  - type_a
+  - type_b
+  - type_c
+min_nodes: 3
+max_nodes: 20
+agent_types:
   - solver
   - verifier
   - coordinator
