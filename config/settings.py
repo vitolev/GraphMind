@@ -15,6 +15,7 @@ class Config:
     agent_roles: List[str] = field(default_factory=lambda: ["solver", "verifier", "coordinator"])
     
     # GNN Configuration
+    gnn_model_type: str = "linear_regression_gnn"
     gnn_hidden_dim: int = 128
     gnn_num_layers: int = 3
     gnn_num_heads: int = 8
@@ -27,7 +28,6 @@ class Config:
     # Selection Strategy
     top_k_to_keep: int = 100
     eval_k_best: int = 50
-    good_graphs_max_size: int = 1000
     
     # Evaluation
     num_eval_problems: int = 10

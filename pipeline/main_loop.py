@@ -44,7 +44,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
         logger: Logger object
     """
     
-    from gnn_models.model_manager import initialize_gnn_models
+    from gnn_models.model_manager import initialize_gnn_model
     from data_management.dataset_manager import load_training_dataset, save_training_dataset
     from evaluation.math_solver import load_math_problems
     from data_management.graph_storage import load_good_graphs_set
@@ -53,14 +53,14 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
 
     state = PipelineState()
     
-    models = initialize_gnn_models(config, logger)
+    model = initialize_gnn_model(config, logger)
     
     training_dataset = load_training_dataset(config.data_dir, logger)
     state.training_dataset_size = training_dataset.size()
     
     math_problems = load_math_problems(config, logger)
     
-    good_graphs_set = load_good_graphs_set(config.data_dir, config.good_graphs_max_size, logger)
+    good_graphs_set = load_good_graphs_set(config.data_dir, logger)
     
     logger.info(f"{'='*60}")
     logger.info("Configuration:")
@@ -82,7 +82,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
         try:
             metrics = run_single_iteration(
                 iteration_num, config, logger, state, 
-                models, good_graphs_set, training_dataset, math_problems
+                model, good_graphs_set, training_dataset, math_problems
             )
             
             logger.info(f"\nIteration Results:")
@@ -92,8 +92,8 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
             logger.info(f"  - Training samples added: {metrics.training_samples_added}")
             logger.info(f"  - Best predicted score: {metrics.best_predicted_score:.4f}")
             logger.info(f"  - Best actual score: {metrics.best_actual_score:.4f}")
-            if metrics.gnn_retrained:
-                logger.info(f"  - GNN RETRAINED (loss: {metrics.retrain_loss:.4f})")
+            # if metrics.gnn_retrained:
+            #     logger.info(f"  - GNN RETRAINED (loss: {metrics.retrain_loss:.4f})")
             
             iteration_time = time.time() - iteration_start
             logger.info(f"  - Iteration time: {iteration_time:.2f}s")
@@ -134,25 +134,22 @@ def run_single_iteration(
     config: Config,
     logger: logging.Logger,
     state: PipelineState,
-    models: Dict[str, Any],
+    model: Dict[str, Any],
     good_graphs_set: GraphSet,
     training_dataset: TrainingDataset,
     math_problems: List[Dict[str, Any]]
 ) -> IterationMetrics:
     """
-    Execute single iteration
-    
-    Steps:
-    1. Generate N graphs
-    2. Predict performance
-    3. Select best graphs
-    4. Evaluate selected graphs
-    5. Update training data
-    6. Possibly retrain GNN
+    IDEA for this part: maybe every step should have an output of a dict metrics["step_name"] = { ... },
+    at the end of the look, we also call function evaluate_loop and we get the loop
+    metrics metrics["loop"] = { ... } and we merge them all in the metrics dataclass
+
+    For this, we will have to change the dataclass and the return type accordingly.
     """
 
     from evaluation.llm_evaluator import evaluate_selected_graphs
     from data_management.graph_storage import select_top_graphs
+    from gnn_models.model_manager import retrain_gnn_model
     
     logger.info(f"\n[Step 1/6] Generating {config.num_graphs_per_iteration:,} graphs...")
     generated_graphs = generate_graph_batch(config, logger)
@@ -169,6 +166,7 @@ def run_single_iteration(
     selected_graphs = select_top_graphs(
         config, logger, predictions, good_graphs_set)
     logger.info(f"  ✓ Selected {len(selected_graphs)} graphs")
+    logger.info(f"  Best selected ")
     logger.info(f"  ✓ Good graphs set size: {good_graphs_set.size()}")
     
     logger.info(f"\n[Step 4/6] Evaluating selected graphs with LLM...")
@@ -186,16 +184,14 @@ def run_single_iteration(
     
     gnn_retrained = False
     retrain_loss = None
-    
-    if (iteration_num + 1) % config.retrain_frequency == 0:
-        logger.info(f"\n[Step 6/6] Retraining GNN models...")
-        retrain_loss = retrain_gnn_models(config, logger, state, training_dataset)
-        gnn_retrained = True
-        logger.info(f"  ✓ GNN retrained")
-        logger.info(f"  ✓ Retrain loss: {retrain_loss:.4f}")
-    else:
-        logger.info(f"\n[Step 6/6] Skipping retrain (next in {config.retrain_frequency - (iteration_num + 1) % config.retrain_frequency} iterations)")
-    
+    logger.info(f"\n[Step DEBUG/6] {training_dataset.size()} samples in training dataset")
+    #logger.info(f"[Step DEBUG/6] Containes in training dataset: {training_dataset.get_samples()[:5]} ")
+    logger.info(f"\n[Step 6/6] Retraining GNN models...")
+    model = retrain_gnn_model(config, logger, model, training_dataset) # Correct this to be the right data
+    gnn_retrained = True
+    logger.info(f"  ✓ GNN retrained")
+    #logger.info(f"  ✓ Retrain loss: {retrain_loss:.4f}")
+
     # Create metrics
     metrics = IterationMetrics(
         iteration_num=iteration_num,
@@ -245,6 +241,7 @@ def predict_batch_performance(
     # TODO: Run actual GNN inference
     # For now, return dummy predictions
     predictions = []
+    #print(gnn_graphs[0])
     for gnn_graph in gnn_graphs:
         predictions.append({
             'graph': gnn_graph,

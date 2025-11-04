@@ -11,6 +11,8 @@ agent_roles:
   - verifier
   - coordinator
 
+gnn_model_type: linear_regression_gnn
+
 # GNN Configuration
 gnn_hidden_dim: 128
 gnn_num_layers: 3
@@ -22,8 +24,8 @@ gnn_epochs: 50
 gnn_device: cuda
 
 # Selection Strategy
-top_k_to_keep: 100
-eval_k_best: 50
+top_k_to_keep: 1000
+eval_k_best: 10
 
 # Evaluation
 num_eval_problems: 10
@@ -31,7 +33,6 @@ eval_timeout_seconds: 30
 llm_model: gpt-4
 
 # Pipeline Control
-retrain_frequency: 10
 max_iterations: 1000
 checkpoint_frequency: 5
 

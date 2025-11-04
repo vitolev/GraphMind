@@ -1,0 +1,5 @@
+The point of this research folder is to write scripts for:
+- running the whole pipeline with multiple models and comparing the metrics
+- saving the progress of different models
+- creating graphGym and comparing the exsisting models while researching 
+    new models on the exported data from the pipeline.
