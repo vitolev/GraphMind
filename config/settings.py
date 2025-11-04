@@ -9,9 +9,10 @@ class Config:
     
     # Graph Generation
     num_graphs_per_iteration: int = 100000
-    graph_templates: List[str] = field(default_factory=lambda: ["supervisor", "network", "hierarchical"])
-    num_agents_min: int = 3
-    num_agents_max: int = 20
+    generation_strategy: str = "random"
+    agent_types: List[str] = field(default_factory=lambda: ["type_a", "type_b", "type_c"])
+    min_nodes: int = 3
+    max_nodes: int = 20
     agent_roles: List[str] = field(default_factory=lambda: ["solver", "verifier", "coordinator"])
     
     # GNN Configuration
