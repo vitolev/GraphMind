@@ -13,6 +13,7 @@ import pickle
 import logging
 from pathlib import Path
 from typing import List, Dict, Any
+from config.settings import Config
 
 class GraphSet:
     """Container for good graphs"""
@@ -154,3 +155,32 @@ def select_for_evaluation(
     selected_graphs = graph_set.get_best_k_and_remove(k)
     logger.debug(f"Selected best {len(selected_graphs)} graphs for evaluation and removed them from the good graphs set.")
     return selected_graphs
+
+def select_top_graphs(
+    config: Config,
+    logger: logging.Logger,
+    predictions: list,
+    good_graphs_set: GraphSet
+) -> list:
+    """
+    Function adds the new predictions, adds them to the good graph set
+    """
+    top_predictions = sorted(predictions, key=lambda x: x[1], reverse=True)[:config.top_k_to_keep]
+
+    add_to_graphs_set(
+        good_graphs_set,
+        top_predictions,
+        logger
+    )
+
+    selected = select_for_evaluation(good_graphs_set, config.top_k_to_keep, logger)
+    
+    good_graphs_set.enforce_max_size(config.top_k_to_keep)
+
+    save_good_graphs_set(
+        good_graphs_set,
+        config.data_dir,
+        logger
+    )
+    
+    return selected

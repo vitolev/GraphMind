@@ -24,7 +24,6 @@ gnn_device: cuda
 # Selection Strategy
 top_k_to_keep: 100
 eval_k_best: 50
-good_graphs_max_size: 1000
 
 # Evaluation
 num_eval_problems: 10

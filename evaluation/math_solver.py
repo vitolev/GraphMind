@@ -34,7 +34,6 @@ def load_math_problems(
     
     logger.info(f"Loading {config.num_eval_problems} math problems...")
     
-    # Set seed for reproducibility
     np.random.seed(config.seed)
 
     start_int = np.random.randint(0, 10000 - config.num_eval_problems)
