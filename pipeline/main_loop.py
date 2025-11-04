@@ -139,18 +139,18 @@ def run_single_iteration(
     logger.info(f"  ✅ Best predicted score: {metrics2['best_predicted']}")
     
     logger.info(f"\n[Step 3/6] Selecting top {config.eval_k_best} graphs for evaluation...")
-    selected_graphs = select_top_graphs(config, logger, predictions, good_graphs_set) 
+    selected_graphs = select_top_graphs(config, logger, good_graphs_set, predictions) 
+    # ATTENTION: check if good_graphs_set is changing throughout the interations if something is going wrong
     logger.info(f"  ✓ Selected {selected_graphs.size()} graphs")
     logger.info(f"  Best selected ")
     logger.info(f"  ✓ Good graphs set size: {good_graphs_set.size()}")
     
     logger.info(f"\n[Step 4/6] Evaluating selected graphs with LLM...")
-    evaluation_results = evaluate_selected_graphs( #Vzame baby-ja od merge_and_evaluate in tega evaluate-a
-        config, logger, selected_graphs, math_problems)
-    best_actual = max(r['actual_score'] for r in evaluation_results) if evaluation_results else 0.0
-    logger.info(f"  ✓ Evaluated {len(evaluation_results)} graphs")
+    metrics4, evaluation_results = evaluate_selected_graphs(config, logger, selected_graphs, math_problems)
+    best_actual = metrics4['best_evaluated']
+    logger.info(f"  ✓ Evaluated {evaluation_results.size()} graphs")
     logger.info(f"  ✓ Best actual score: {best_actual:.4f}")
-    state.total_evaluations_done += len(evaluation_results)
+    #state.total_evaluations_done += len(evaluation_results)
     
     logger.info(f"\n[Step 5/6] Updating training dataset...")
     num_samples_added = update_training_data(config, logger, evaluation_results, training_dataset) #To je graphset
@@ -182,33 +182,6 @@ def run_single_iteration(
     )
     
     return metrics
-
-# def predict_batch_performance(
-#     config: Config,
-#     logger: logging.Logger,
-#     graphs: list
-# ) -> list:
-#     """Run GNN inference on all graphs"""
-#     from graph_conversion.serialization import serialize_langgraph_batch
-#     from graph_conversion.gnn_conversion import convert_to_gnn_format_batch
-    
-#     # Serialize
-#     serialized = serialize_langgraph_batch(graphs, logger)
-    
-#     # Convert to GNN
-#     gnn_graphs = convert_to_gnn_format_batch(serialized, logger)
-    
-#     # TODO: Run actual GNN inference
-#     # For now, return dummy predictions
-#     predictions = []
-#     #print(gnn_graphs[0])
-#     for gnn_graph in gnn_graphs:
-#         predictions.append({
-#             'graph': gnn_graph,
-#             'score': np.random.random(),  # Dummy score
-#         })
-    
-#     return predictions
 
 def update_training_data(
     config: Config,

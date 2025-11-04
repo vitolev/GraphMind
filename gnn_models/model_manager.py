@@ -7,7 +7,6 @@ from data_management.graph_storage import GraphSet
 import torch
 import numpy as np
 
-
 def initialize_gnn_model(
     config: Config,
     logger: logging.Logger
