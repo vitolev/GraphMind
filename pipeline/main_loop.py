@@ -124,7 +124,6 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     logger.info(f"Total evaluations done: {state.total_evaluations_done}")
     logger.info(f"Final training dataset size: {state.training_dataset_size}")
     
-    # Save final training dataset
     save_training_dataset(training_dataset, config.data_dir, logger)
 
 from data_management.graph_storage import GraphSet
@@ -153,6 +152,7 @@ def run_single_iteration(
     """
 
     from evaluation.llm_evaluator import evaluate_selected_graphs
+    from data_management.graph_storage import select_top_graphs
     
     logger.info(f"\n[Step 1/6] Generating {config.num_graphs_per_iteration:,} graphs...")
     generated_graphs = generate_graph_batch(config, logger)
@@ -167,15 +167,13 @@ def run_single_iteration(
     
     logger.info(f"\n[Step 3/6] Selecting top {config.eval_k_best} graphs for evaluation...")
     selected_graphs = select_top_graphs(
-        config, logger, predictions, good_graphs_set
-    )
+        config, logger, predictions, good_graphs_set)
     logger.info(f"  ✓ Selected {len(selected_graphs)} graphs")
     logger.info(f"  ✓ Good graphs set size: {good_graphs_set.size()}")
     
     logger.info(f"\n[Step 4/6] Evaluating selected graphs with LLM...")
     evaluation_results = evaluate_selected_graphs(
-        config, logger, selected_graphs, math_problems
-    )
+        config, logger, selected_graphs, math_problems)
     best_actual = max(r['actual_score'] for r in evaluation_results) if evaluation_results else 0.0
     logger.info(f"  ✓ Evaluated {len(evaluation_results)} graphs")
     logger.info(f"  ✓ Best actual score: {best_actual:.4f}")

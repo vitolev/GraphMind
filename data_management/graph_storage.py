@@ -20,7 +20,6 @@ class GraphSet:
     
     def __init__(self, max_size: int = 1000):
         self.graphs: List[Dict[str, Any]] = []
-        self.max_size = max_size
     
     def add_graphs(self, new_graphs: List[Dict[str, Any]]) -> None:
         """Add graphs to set
@@ -44,21 +43,16 @@ class GraphSet:
         """Get number of graphs"""
         return len(self.graphs)
     
-    def is_full(self) -> bool:
-        """Check if at max capacity"""
-        return len(self.graphs) >= self.max_size
-    
-    def enforce_max_size(self) -> None:
+    def enforce_max_size(self, max_size) -> None:
         """Trim to max size if exceeded"""
-        if len(self.graphs) > self.max_size:
-            self.graphs = self.graphs[:self.max_size]
+        if len(self.graphs) > max_size:
+            self.graphs = self.graphs[:max_size]
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
             'graphs': self.graphs,
             'count': len(self.graphs),
-            'max_size': self.max_size,
         }
 
 def load_good_graphs_set(
@@ -125,16 +119,8 @@ def add_to_graphs_set(
     new_graphs: List[Dict[str, Any]],
     logger: logging.Logger
 ) -> None:
-    """
-    Add new graphs and enforce max size
     
-    Args:
-        graph_set: GraphSet to update
-        new_graphs: Graphs to add
-        logger: Logger
-    """
     graph_set.add_graphs(new_graphs)
-    graph_set.enforce_max_size()
     logger.debug(f"Good graphs set updated, now has {graph_set.size()} graphs.")
 
 def select_for_evaluation(
@@ -165,7 +151,7 @@ def select_top_graphs(
     """
     Function adds the new predictions, adds them to the good graph set
     """
-    top_predictions = sorted(predictions, key=lambda x: x[1], reverse=True)[:config.top_k_to_keep]
+    top_predictions = sorted(predictions, key=lambda x: x["score"], reverse=True)[:config.top_k_to_keep]
 
     add_to_graphs_set(
         good_graphs_set,
@@ -175,7 +161,7 @@ def select_top_graphs(
 
     selected = select_for_evaluation(good_graphs_set, config.top_k_to_keep, logger)
     
-    good_graphs_set.enforce_max_size(config.top_k_to_keep)
+    good_graphs_set.enforce_max_size(max_size=config.top_k_to_keep)
 
     save_good_graphs_set(
         good_graphs_set,
