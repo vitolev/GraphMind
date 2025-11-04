@@ -17,7 +17,7 @@ def generate_graph_batch(
     strategy = config.generation_strategy
     
     if strategy == 'random':
-        graphset, duration = _random_strategy(config, logger, training_dataset)
+        graphset = _random_strategy(config, logger, training_dataset)
     # elif strategy == 'similar_to_training':
     #     graphset = _similar_to_training_strategy(config, logger, training_dataset)
     # elif strategy == 'custom':
@@ -35,7 +35,7 @@ def generate_graph_batch(
         'num_samples': num_generated,
         'strategy': strategy,
         'metadata': {
-            'node_types': config.node_types,
+            'node_types': config.agent_types,
             'num_graphs_per_iteration': config.num_graphs_per_iteration,
         }
     }
@@ -46,7 +46,7 @@ def _random_strategy(
     config: Config,
     logger: logging.Logger,
     training_dataset: Optional[GraphSet] = None,
-) -> Tuple[GraphSet, float]:
+) -> GraphSet:
 
     generated_graphs = GraphSet()
     

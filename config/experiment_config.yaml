@@ -1,5 +1,5 @@
 # Graph Generation
-num_graphs_per_iteration: 10000
+num_graphs_per_iteration: 100000
 generation_strategy: random
 agent_types:
   - type_a

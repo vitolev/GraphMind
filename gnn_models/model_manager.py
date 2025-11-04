@@ -1,8 +1,12 @@
 import logging
 import importlib
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Tuple
 from config.settings import Config
-from data_management.dataset_manager import TrainingDataset
+import time
+from data_management.graph_storage import GraphSet
+import torch
+import numpy as np
+
 
 def initialize_gnn_model(
     config: Config,
@@ -43,40 +47,62 @@ def initialize_gnn_model(
 def predict_batch_performance(
     config: Config,
     logger: logging.Logger,
-    gnn_graphs: List[Dict[str, Any]],
-    model: Any
-) -> List[Dict[str, Any]]:
-
-    logger.debug(f"Running inference on {len(gnn_graphs)} graphs")
+    model: Any,
+    generated_graphs: GraphSet,
+    iteration_num: bool = False
+) -> Tuple[Dict[str, Any], GraphSet]:
     
-    if not gnn_graphs:
-        logger.warning("No graphs provided for prediction")
-        return []
+    print(iteration_num)
+    if iteration_num == 0:
+        num_graphs = generated_graphs.size()
+        logger.debug(f"Model not provided, assigning random scores (0.0-0.1) to {num_graphs} graphs")
+        predictions_list = [float(np.random.uniform(0.0, 0.1)) for _ in range(num_graphs)]
+        inference_time = 0.0
+    else:
+        pyg_graphs = generated_graphs.to_pyg(config, type="HeteroData")
+        num_graphs = len(pyg_graphs)
+        
+        logger.debug(f"Converted {num_graphs} graphs to HeteroData for GNN prediction")
+        
+        start_time = time.time()
+        with torch.no_grad():
+            predictions = model.predict(pyg_graphs)
+        inference_time = time.time() - start_time
+        
+        predictions_list = list(predictions)
     
-    scores = model.predict(gnn_graphs)
+    for graph, pred in zip(generated_graphs.graphs, predictions_list):
+        graph.set_gnn_score(float(pred))
     
-    predictions = []
-    for gnn_graph, score in zip(gnn_graphs, scores):
-        predictions.append({
-            'graph': gnn_graph,
-            'score': float(score),
-        })
+    scores = np.array([float(p) for p in predictions_list])
     
-    predictions.sort(key=lambda x: x['score'], reverse=True)
+    metrics = {
+        'step_name': 'prediction',
+        'duration_seconds': round(inference_time, 4),
+        'num_samples': num_graphs,
+        'best_predicted': float(scores.max()) if len(scores) > 0 else None,
+        'worst_predicted': float(scores.min()) if len(scores) > 0 else None,
+        'mean_predicted': float(scores.mean()) if len(scores) > 0 else None,
+        'std_predicted': float(scores.std()) if len(scores) > 0 else None,
+        'metadata': {
+            'inference_time_per_graph': round(inference_time / num_graphs, 4) if num_graphs > 0 else 0,
+        }
+    }
     
-    logger.debug(f"  ✓ Generated {len(predictions)} predictions")
     logger.debug(
-        f"    - Score range: [{predictions[-1]['score']:.4f}, {predictions['score']:.4f}]"
+        f"GNN prediction complete - "
+        f"Best: {metrics['best_predicted']:.4f}, "
+        f"Mean: {metrics['mean_predicted']:.4f}, "
+        f"Time: {inference_time:.4f}s"
     )
     
-    return predictions
-
+    return metrics, generated_graphs
 
 def retrain_gnn_model(
     config: Config,
     logger: logging.Logger,
     model: Any,
-    training_dataset: TrainingDataset
+    training_dataset: GraphSet
 ) -> Any:
     
     logger.info("Retraining GNN model")

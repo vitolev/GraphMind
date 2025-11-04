@@ -41,8 +41,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     from evaluation.math_solver import load_math_problems
     from data_management.graph_storage import load_good_graphs_set
     
-    logger.info("Initializing pipeline components...")
-
+    logger.info("Initializing pipeline components...")    
     state = PipelineState()
     
     model = initialize_gnn_model(config, logger)
@@ -126,26 +125,22 @@ def run_single_iteration(
     """
 
     from graph_generation.graph_generation import generate_graph_batch
+    from gnn_models.model_manager import predict_batch_performance, retrain_gnn_model
     from evaluation.llm_evaluator import evaluate_selected_graphs
     from data_management.graph_storage import select_top_graphs
-    from gnn_models.model_manager import retrain_gnn_model
     
     logger.info(f"\n[Step 1/6] Generating {config.num_graphs_per_iteration:,} graphs...")
-    metrics, generated_graphs = generate_graph_batch(config, logger) # Generira GraphSet object with Graph objects inside
-    logger.info(f"  ✓ Generated {len(generated_graphs)} graphs")
-    state.total_graphs_generated += len(generated_graphs)
+    metrics1, generated_graphs = generate_graph_batch(config, logger, training_dataset)
+    logger.info(f"  ✅ Generated {generated_graphs.size()} graphs")
     
     logger.info(f"\n[Step 2/6] Running GNN predictions on all graphs...")
-    #Below should return metrics???
-    predictions = predict_batch_performance(config, logger, generated_graphs) # Input is list of Graph objects GraphSet.to_pyg() will be used to predict This function updates GraphSet objects to have paramets gnn_predic set
-    best_predicted = max(p['score'] for p in predictions)
-    logger.info(f"  ✓ Predictions complete")
-    logger.info(f"  ✓ Best predicted score: {best_predicted:.4f}")
+    metrics2, predictions = predict_batch_performance(config, logger, model, generated_graphs, iteration_num) # Input is list of Graph objects GraphSet.to_pyg() will be used to predict This function updates GraphSet objects to have paramets gnn_predic set
+    logger.info(f"  ✅ Predictions complete")
+    logger.info(f"  ✅ Best predicted score: {metrics2['best_predicted']}")
     
     logger.info(f"\n[Step 3/6] Selecting top {config.eval_k_best} graphs for evaluation...")
-    selected_graphs = select_top_graphs(
-        config, logger, predictions, good_graphs_set) # pre-initialized good graph set object is filled with new predicted and filtered
-    logger.info(f"  ✓ Selected {len(selected_graphs)} graphs")
+    selected_graphs = select_top_graphs(config, logger, predictions, good_graphs_set) 
+    logger.info(f"  ✓ Selected {selected_graphs.size()} graphs")
     logger.info(f"  Best selected ")
     logger.info(f"  ✓ Good graphs set size: {good_graphs_set.size()}")
     
@@ -162,6 +157,7 @@ def run_single_iteration(
     state.training_dataset_size += num_samples_added
     logger.info(f"  ✓ Added {num_samples_added} samples to training data")
     
+    first_loop = False
     gnn_retrained = False
     retrain_loss = None
     logger.info(f"\n[Step DEBUG/6] {training_dataset.size()} samples in training dataset")
@@ -187,32 +183,32 @@ def run_single_iteration(
     
     return metrics
 
-def predict_batch_performance(
-    config: Config,
-    logger: logging.Logger,
-    graphs: list
-) -> list:
-    """Run GNN inference on all graphs"""
-    from graph_conversion.serialization import serialize_langgraph_batch
-    from graph_conversion.gnn_conversion import convert_to_gnn_format_batch
+# def predict_batch_performance(
+#     config: Config,
+#     logger: logging.Logger,
+#     graphs: list
+# ) -> list:
+#     """Run GNN inference on all graphs"""
+#     from graph_conversion.serialization import serialize_langgraph_batch
+#     from graph_conversion.gnn_conversion import convert_to_gnn_format_batch
     
-    # Serialize
-    serialized = serialize_langgraph_batch(graphs, logger)
+#     # Serialize
+#     serialized = serialize_langgraph_batch(graphs, logger)
     
-    # Convert to GNN
-    gnn_graphs = convert_to_gnn_format_batch(serialized, logger)
+#     # Convert to GNN
+#     gnn_graphs = convert_to_gnn_format_batch(serialized, logger)
     
-    # TODO: Run actual GNN inference
-    # For now, return dummy predictions
-    predictions = []
-    #print(gnn_graphs[0])
-    for gnn_graph in gnn_graphs:
-        predictions.append({
-            'graph': gnn_graph,
-            'score': np.random.random(),  # Dummy score
-        })
+#     # TODO: Run actual GNN inference
+#     # For now, return dummy predictions
+#     predictions = []
+#     #print(gnn_graphs[0])
+#     for gnn_graph in gnn_graphs:
+#         predictions.append({
+#             'graph': gnn_graph,
+#             'score': np.random.random(),  # Dummy score
+#         })
     
-    return predictions
+#     return predictions
 
 def update_training_data(
     config: Config,
