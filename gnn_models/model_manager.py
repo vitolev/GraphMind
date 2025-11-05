@@ -47,28 +47,20 @@ def predict_batch_performance(
     config: Config,
     logger: logging.Logger,
     model: Any,
-    generated_graphs: GraphSet,
-    iteration_num: bool = False
+    generated_graphs: GraphSet
 ) -> Tuple[Dict[str, Any], GraphSet]:
     
-    print(iteration_num)
-    if iteration_num == 0:
-        num_graphs = generated_graphs.size()
-        logger.debug(f"Model not provided, assigning random scores (0.0-0.1) to {num_graphs} graphs")
-        predictions_list = [float(np.random.uniform(0.0, 0.1)) for _ in range(num_graphs)]
-        inference_time = 0.0
-    else:
-        pyg_graphs = generated_graphs.to_pyg(config, type="HeteroData")
-        num_graphs = len(pyg_graphs)
-        
-        logger.debug(f"Converted {num_graphs} graphs to HeteroData for GNN prediction")
-        
-        start_time = time.time()
-        with torch.no_grad():
-            predictions = model.predict(pyg_graphs)
-        inference_time = time.time() - start_time
-        
-        predictions_list = list(predictions)
+    pyg_graphs = generated_graphs.to_pyg(config, type="HeteroData")
+    num_graphs = len(pyg_graphs)
+    
+    logger.debug(f"Converted {num_graphs} graphs to HeteroData for GNN prediction")
+    
+    start_time = time.time()
+    with torch.no_grad():
+        predictions = model.predict(pyg_graphs)
+    inference_time = time.time() - start_time
+    
+    predictions_list = list(predictions)
     
     for graph, pred in zip(generated_graphs.graphs, predictions_list):
         graph.set_gnn_score(float(pred))
@@ -112,8 +104,7 @@ def retrain_gnn_model(
         logger.warning("No training data, skipping retrain")
         return model
     
-    train_data = training_dataset.get_samples()
-    
+    train_data = training_dataset.to_pyg(config, type="HeteroData")
     loss = model.fit(train_data)
     
     logger.info(f"  ✓ Training complete (loss: {loss:.4f})\n")

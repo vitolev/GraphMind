@@ -56,13 +56,15 @@ class Graph:
     def get_time_evaluating(self) -> float:
         return self.time_evaluating
     
-    def to_pyg(self, config: Config, hetero_data = True):
+    def to_pyg(self, config: Config, type="Data"):
         """
         Convert to a PyG Data or HeteroData object.
 
         Args:
             config: Config object with `config.agent_types` (list of all node types).
-            hetero_data (bool): If True, returns a HeteroData object, otherwise Data.
+            type (str): If "Data" returns torch_geometric.data.Data (homogeneous),
+                        if "HeteroData" returns torch_geometric.data.HeteroData (heterogeneous),
+                        otherwise raises ValueError.
 
         Returns:
             torch_geometric.data.Data or torch_geometric.data.HeteroData
@@ -74,7 +76,7 @@ class Graph:
             raise ValueError("config.agent_types must be provided for type encoding.")
 
         # --- Case 1: Homogeneous Data ---
-        if not hetero_data:
+        if type == "Data":
             # One-hot encode node types based on config.agent_types
             num_types = len(agent_types)
             type_to_idx = {t: i for i, t in enumerate(agent_types)}
@@ -90,52 +92,57 @@ class Graph:
             return data
 
         # --- Case 2: Heterogeneous Data ---
-        hetero_data = HeteroData()
+        elif type == "HeteroData":
+            hetero_data = HeteroData()
 
-        # Group nodes by type
-        nodes_by_type = {t: [] for t in agent_types}
-        for node_id, node_type in self.nodes:
-            if node_type not in nodes_by_type:
-                raise ValueError(f"Unknown node type '{node_type}' not in config.agent_types")
-            nodes_by_type[node_type].append(node_id)
+            # Group nodes by type
+            nodes_by_type = {t: [] for t in agent_types}
+            for node_id, node_type in self.nodes:
+                if node_type not in nodes_by_type:
+                    raise ValueError(f"Unknown node type '{node_type}' not in config.agent_types")
+                nodes_by_type[node_type].append(node_id)
 
-        # Add nodes for each type
-        for node_type, node_ids in nodes_by_type.items():
-            num_nodes = len(node_ids)
-            hetero_data[node_type].x = torch.ones((num_nodes, 1), dtype=torch.float)
+            # Add nodes for each type
+            for node_type, node_ids in nodes_by_type.items():
+                num_nodes = len(node_ids)
+                hetero_data[node_type].x = torch.ones((num_nodes, 1), dtype=torch.float)
 
-        # Build edges by (src_type, dst_type)
-        # Initialize edge storage for heterogeneous case
-        edges_by_type = {}
-        for src_agent_type in agent_types:
-            for dst_agent_type in agent_types:
-                edges_by_type[(src_agent_type, "to", dst_agent_type)] = []  # We use "to" as the only relation (edge type)
+            # Build edges by (src_type, dst_type)
+            # Initialize edge storage for heterogeneous case
+            edges_by_type = {}
+            for src_agent_type in agent_types:
+                for dst_agent_type in agent_types:
+                    edges_by_type[(src_agent_type, "to", dst_agent_type)] = []  # We use "to" as the only relation (edge type)
 
-        # Map global node IDs to (type, local index)
-        node_id_to_type_idx = {node_id: (node_type, i) 
-                            for node_type, ids in nodes_by_type.items() 
-                            for i, node_id in enumerate(ids)}
+            # Map global node IDs to (type, local index)
+            node_id_to_type_idx = {node_id: (node_type, i) 
+                                for node_type, ids in nodes_by_type.items() 
+                                for i, node_id in enumerate(ids)}
 
-        for src_id, dst_id in self.edges:
-            if src_id not in node_id_to_type_idx or dst_id not in node_id_to_type_idx:
-                raise ValueError(f"Edge references unknown node ID: ({src_id}, {dst_id})")
-            src_type, src_idx = node_id_to_type_idx[src_id]
-            dst_type, dst_idx = node_id_to_type_idx[dst_id]
-            edge_type = (src_type, "to", dst_type)
-            edges_by_type[edge_type].append((src_idx, dst_idx))
+            for src_id, dst_id in self.edges:
+                if src_id not in node_id_to_type_idx or dst_id not in node_id_to_type_idx:
+                    raise ValueError(f"Edge references unknown node ID: ({src_id}, {dst_id})")
+                src_type, src_idx = node_id_to_type_idx[src_id]
+                dst_type, dst_idx = node_id_to_type_idx[dst_id]
+                edge_type = (src_type, "to", dst_type)
+                edges_by_type[edge_type].append((src_idx, dst_idx))
 
-        # Add edges to HeteroData
-        for (src_type, rel, dst_type), edge_list in edges_by_type.items():
-            if len(edge_list) > 0:
-                edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
-            else:
-                edge_index = torch.empty((2, 0), dtype=torch.long)
-            hetero_data[(src_type, rel, dst_type)].edge_index = edge_index
+            # Add edges to HeteroData
+            for (src_type, rel, dst_type), edge_list in edges_by_type.items():
+                if len(edge_list) > 0:
+                    edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+                else:
+                    edge_index = torch.empty((2, 0), dtype=torch.long)
+                hetero_data[(src_type, rel, dst_type)].edge_index = edge_index
 
-        # Store label and evaluation info globally
-        hetero_data.y = torch.tensor([self.llm_score], dtype=torch.float)
+            # Store label and evaluation info globally
+            hetero_data.y = torch.tensor([self.llm_score], dtype=torch.float)
+            
+            return hetero_data
         
-        return hetero_data
+        #-- Invalid type specified ---
+        else:
+            raise ValueError(f"Invalid type '{type}' specified. Use 'Data' or 'HeteroData'.")
         
 
 class GraphSet:
@@ -183,20 +190,14 @@ class GraphSet:
         if len(self.graphs) > max_size:
             self.graphs = self.graphs[:max_size]
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization"""
-        return {
-            'graphs': [  # Serialize each graph as a dict
-                {
-                    'nodes': graph.get_nodes(),
-                    'edges': graph.get_edges(),
-                    'gnn_score': graph.get_gnn_score(),
-                    'llm_score': graph.get_llm_score(),
-                    'time_evaluating': graph.get_time_evaluating()
-                }
-                for graph in self.graphs
-            ],
-        }
+    def to_pyg(self, config: Config, type="Data"):
+        """Convert all graphs to PyG Data or HeteroData objects"""
+        pyg_graphs = []
+        for graph in self.graphs:
+            pyg_graph = graph.to_pyg(config, type=type)
+            pyg_graphs.append(pyg_graph)
+        return pyg_graphs
+
 
 def load_good_graphs_set(
     config_data_dir: Path,
@@ -252,6 +253,62 @@ def save_good_graphs_set(
         logger.error(f"Failed to save good graphs set: {e}")
         raise
 
+def load_training_dataset(
+    config_data_dir: Path,
+    logger: logging.Logger
+) -> GraphSet:
+    """
+    Load training dataset from disk
+    
+    If file doesn't exist, returns empty dataset
+    
+    Args:
+        config_data_dir: Path to data directory
+        logger: Logger
+    
+    Returns:
+        GraphSet object
+    """
+    dataset = GraphSet()
+    dataset_path = config_data_dir / "training_dataset.pkl"
+    
+    if dataset_path.exists():
+        try:
+            with open(dataset_path, 'rb') as f:
+                loaded = pickle.load(f)
+            dataset = loaded
+            logger.info(f"Loaded training dataset with {dataset.size()} graphs from {dataset_path}")
+        except Exception as e:
+            logger.warning(f"Could not load training dataset: {e}, starting fresh")
+    else:
+        logger.info(f"No existing training dataset found at {dataset_path}, starting fresh")
+    
+    return dataset
+
+def save_training_dataset(
+    dataset: GraphSet,
+    config_data_dir: Path,
+    logger: logging.Logger
+) -> None:
+    """
+    Save training dataset to disk
+    
+    Args:
+        dataset: GraphSet to save
+        config_data_dir: Path to data directory
+        logger: Logger
+    """
+    config_data_dir.mkdir(parents=True, exist_ok=True)
+    dataset_path = config_data_dir / "training_dataset.pkl"
+    
+    try:
+        with open(dataset_path, 'wb') as f:
+            pickle.dump(dataset, f)
+        logger.debug(f"Saved training dataset ({dataset.size()} graphs) to {dataset_path}")
+    except Exception as e:
+        logger.error(f"Failed to save training dataset: {e}")
+        raise
+
 def select_top_graphs(
     config: Config,
     logger: logging.Logger,
@@ -296,6 +353,33 @@ def select_top_graphs(
     
     return eval_graphs_set
 
+def update_training_data(
+    config: Config,
+    logger: logging.Logger,
+    evaluation_results: GraphSet,
+    training_dataset: GraphSet
+) -> int:
+    """
+    Add evaluated graphs (Graph with llm_score) to training dataset and save it.
+
+    Args:
+        config: Configuration
+        logger: Logger
+        evaluation_results: GraphSet with evaluated graphs
+        training_dataset: GraphSet representing the training dataset
+
+    Returns:
+        Number of samples actually added
+    """
+    # Add graphs to training dataset
+    training_dataset.add_graphs(evaluation_results.get_all())
+    num_added = evaluation_results.size()
+
+    # Save updated training dataset
+    save_training_dataset(training_dataset, config.data_dir, logger)
+
+    return num_added
+
 
 if __name__ == "__main__":
     # Sample graph for testing
@@ -312,12 +396,12 @@ if __name__ == "__main__":
     sample_config.agent_types = ['A', 'B', 'C']
 
     # Convert to PyG Data
-    pyg_data = sample_graph.to_pyg(sample_config, hetero_data=False)
+    pyg_data = sample_graph.to_pyg(sample_config, type="Data")
     print(pyg_data.x)
     print(pyg_data.edge_index)
     print(pyg_data.y)
 
-    pyg_data_hetero = sample_graph.to_pyg(sample_config, hetero_data=True)
+    pyg_data_hetero = sample_graph.to_pyg(sample_config, type="HeteroData")
     print(pyg_data_hetero)
     for node_type in pyg_data_hetero.node_types:
         print(f"Node type: {node_type}, x: {pyg_data_hetero[node_type].x}")

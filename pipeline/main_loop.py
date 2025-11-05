@@ -36,18 +36,24 @@ class PipelineState:
             self.iteration_history = []
 
 def run_pipeline(config: Config, logger: logging.Logger) -> None:    
-    from gnn_models.model_manager import initialize_gnn_model
-    from data_management.dataset_manager import load_training_dataset, save_training_dataset
+    from gnn_models.model_manager import initialize_gnn_model, retrain_gnn_model
     from evaluation.math_solver import load_math_problems
-    from data_management.graph_storage import load_good_graphs_set
+    from data_management.graph_storage import load_good_graphs_set, load_training_dataset, save_training_dataset
     
     logger.info("Initializing pipeline components...")    
     state = PipelineState()
     
     model = initialize_gnn_model(config, logger)
     
-    training_dataset = load_training_dataset(config.data_dir, logger)
+    training_dataset = load_training_dataset(config.data_dir, logger) # This is GraphSet object that stores training data
     state.training_dataset_size = training_dataset.size()
+
+    if state.training_dataset_size > 0:
+        logger.info(f"{'='*60}")
+        logger.info(f"Initial training dataset exists. Training the initial model...")
+        model = retrain_gnn_model(config, logger, model, training_dataset)
+        logger.info(f"Model retrained on existing training data ({state.training_dataset_size} samples).")
+        logger.info(f"{'='*60}")
     
     math_problems = load_math_problems(config, logger)
     
@@ -127,16 +133,17 @@ def run_single_iteration(
     from graph_generation.graph_generation import generate_graph_batch
     from gnn_models.model_manager import predict_batch_performance, retrain_gnn_model
     from evaluation.llm_evaluator import evaluate_selected_graphs
-    from data_management.graph_storage import select_top_graphs
+    from data_management.graph_storage import select_top_graphs, update_training_data
     
     logger.info(f"\n[Step 1/6] Generating {config.num_graphs_per_iteration:,} graphs...")
     metrics1, generated_graphs = generate_graph_batch(config, logger, training_dataset)
     logger.info(f"  ✅ Generated {generated_graphs.size()} graphs")
     
     logger.info(f"\n[Step 2/6] Running GNN predictions on all graphs...")
-    metrics2, predictions = predict_batch_performance(config, logger, model, generated_graphs, iteration_num) # Input is list of Graph objects GraphSet.to_pyg() will be used to predict This function updates GraphSet objects to have paramets gnn_predic set
+    metrics2, predictions = predict_batch_performance(config, logger, model, generated_graphs) # Input is list of Graph objects GraphSet.to_pyg() will be used to predict This function updates GraphSet objects to have paramets gnn_predic set
+    best_predicted = metrics2['best_predicted']
     logger.info(f"  ✅ Predictions complete")
-    logger.info(f"  ✅ Best predicted score: {metrics2['best_predicted']}")
+    logger.info(f"  ✅ Best predicted score: {best_predicted:.4f}")
     
     logger.info(f"\n[Step 3/6] Selecting top {config.eval_k_best} graphs for evaluation...")
     selected_graphs = select_top_graphs(config, logger, good_graphs_set, predictions) 
@@ -160,7 +167,6 @@ def run_single_iteration(
     first_loop = False
     gnn_retrained = False
     retrain_loss = None
-    logger.info(f"\n[Step DEBUG/6] {training_dataset.size()} samples in training dataset")
     logger.info(f"\n[Step 6/6] Retraining GNN models...")
     model = retrain_gnn_model(config, logger, model, training_dataset) # Correct this to be the right data
     gnn_retrained = True
@@ -171,9 +177,9 @@ def run_single_iteration(
     metrics = IterationMetrics(
         iteration_num=iteration_num,
         timestamp=datetime.now(),
-        graphs_generated=len(generated_graphs),
-        graphs_selected=len(selected_graphs),
-        graphs_evaluated=len(evaluation_results),
+        graphs_generated=generated_graphs.size(),
+        graphs_selected=selected_graphs.size(),
+        graphs_evaluated=evaluation_results.size(),
         training_samples_added=num_samples_added,
         best_predicted_score=best_predicted,
         best_actual_score=best_actual,
@@ -182,28 +188,3 @@ def run_single_iteration(
     )
     
     return metrics
-
-def update_training_data(
-    config: Config,
-    logger: logging.Logger,
-    evaluation_results: list,
-    training_dataset: GraphSet
-) -> int:
-    """Add evaluation results to training dataset"""
-    from data_management.dataset_manager import add_samples_to_dataset, save_training_dataset
-    
-    # Add samples to dataset
-    num_added = add_samples_to_dataset(
-        training_dataset,
-        evaluation_results,
-        logger
-    )
-
-    # Save updated dataset
-    save_training_dataset(
-        training_dataset,
-        config.data_dir,
-        logger
-    )   
-    
-    return num_added

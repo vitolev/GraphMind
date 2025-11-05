@@ -51,7 +51,7 @@ def _random_strategy(
     generated_graphs = GraphSet()
     
     for graph_idx in range(config.num_graphs_per_iteration):
-        if (graph_idx + 1) % 500 == 0:
+        if (graph_idx + 1) % 10000 == 0:
             logger.debug(f"Generated {graph_idx + 1} / {config.num_graphs_per_iteration} graphs")
         try:
             num_nodes = random.randint(config.min_nodes, config.max_nodes)
