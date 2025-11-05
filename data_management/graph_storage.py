@@ -19,13 +19,11 @@ import json
 import pickle
 import logging
 from pathlib import Path
-from dataclasses import dataclass, field
 from typing import List, Dict, Any
 from config.settings import Config
 import torch
 from torch_geometric.data import Data, HeteroData
 
-@dataclass
 class Graph:
     """Graph data structure"""
 
@@ -69,7 +67,6 @@ class Graph:
         Returns:
             torch_geometric.data.Data or torch_geometric.data.HeteroData
         """
-        edge_index = torch.tensor(self.edges, dtype=torch.long).t().contiguous()
 
         # Ensure we have agent types
         agent_types = getattr(config, "agent_types", None)
@@ -81,6 +78,7 @@ class Graph:
             # One-hot encode node types based on config.agent_types
             num_types = len(agent_types)
             type_to_idx = {t: i for i, t in enumerate(agent_types)}
+            edge_index = torch.tensor(self.edges, dtype=torch.long).t().contiguous()
 
             x = torch.zeros((len(self.nodes), num_types), dtype=torch.float)
             for i, (_, node_type) in enumerate(self.nodes):
@@ -92,7 +90,6 @@ class Graph:
             return data
 
         # --- Case 2: Heterogeneous Data ---
-        # TODO: Not working ok.
         hetero_data = HeteroData()
 
         # Group nodes by type
@@ -108,7 +105,13 @@ class Graph:
             hetero_data[node_type].x = torch.ones((num_nodes, 1), dtype=torch.float)
 
         # Build edges by (src_type, dst_type)
+        # Initialize edge storage for heterogeneous case
         edges_by_type = {}
+        for src_agent_type in agent_types:
+            for dst_agent_type in agent_types:
+                edges_by_type[(src_agent_type, "to", dst_agent_type)] = []  # We use "to" as the only relation (edge type)
+
+        # Map global node IDs to (type, local index)
         node_id_to_type_idx = {node_id: (node_type, i) 
                             for node_type, ids in nodes_by_type.items() 
                             for i, node_id in enumerate(ids)}
@@ -119,13 +122,14 @@ class Graph:
             src_type, src_idx = node_id_to_type_idx[src_id]
             dst_type, dst_idx = node_id_to_type_idx[dst_id]
             edge_type = (src_type, "to", dst_type)
-            if edge_type not in edges_by_type:
-                edges_by_type[edge_type] = []
             edges_by_type[edge_type].append((src_idx, dst_idx))
 
         # Add edges to HeteroData
         for (src_type, rel, dst_type), edge_list in edges_by_type.items():
-            edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+            if len(edge_list) > 0:
+                edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+            else:
+                edge_index = torch.empty((2, 0), dtype=torch.long)
             hetero_data[(src_type, rel, dst_type)].edge_index = edge_index
 
         # Store label and evaluation info globally
@@ -134,7 +138,6 @@ class Graph:
         return hetero_data
         
 
-@dataclass
 class GraphSet:
     """Container for graphs sorted """
     
@@ -146,7 +149,6 @@ class GraphSet:
     
     def sort_by_scores(self) -> None:
         """Sort graphs by llm_score and gnn_score descending"""
-        print(self.graphs)
         self.graphs.sort(key=lambda g: (g.llm_score, g.gnn_score), reverse=True)
     
     def add_graph(self, graph: Graph, sort=False) -> None:
@@ -217,7 +219,7 @@ def load_good_graphs_set(
         try:
             with open(set_path, 'rb') as f:
                 loaded = pickle.load(f)
-            graph_set.graphs = loaded.get('graphs', [])
+            graph_set = loaded
             logger.info(f"Loaded good graphs set with {graph_set.size()} graphs from {set_path}")
         except Exception as e:
             logger.warning(f"Could not load good graphs set: {e}, starting fresh")
@@ -244,7 +246,7 @@ def save_good_graphs_set(
     
     try:
         with open(set_path, 'wb') as f:
-            pickle.dump(graph_set.to_dict(), f)
+            pickle.dump(graph_set, f)
         logger.debug(f"Saved good graphs set ({graph_set.size()} graphs) to {set_path}")
     except Exception as e:
         logger.error(f"Failed to save good graphs set: {e}")
@@ -307,7 +309,7 @@ if __name__ == "__main__":
 
     # Define a sample config
     sample_config = Config()
-    sample_config.agent_types = ['A', 'B']
+    sample_config.agent_types = ['A', 'B', 'C']
 
     # Convert to PyG Data
     pyg_data = sample_graph.to_pyg(sample_config, hetero_data=False)
