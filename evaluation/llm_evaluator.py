@@ -20,6 +20,7 @@ def evaluate_selected_graphs(
     logger.debug(f"Starting evaluation of {num_graphs} selected graphs")
     
     scores = []
+    gnn_scores = []
     
     for graph in selected_graphs.get_all():
         try:
@@ -51,7 +52,15 @@ def evaluate_selected_graphs(
     
     evaluation_time = time.time() - step_start
     scores_array = np.array(scores)
+    scores_array = np.array(scores)
+    gnn_scores_array = np.array(gnn_scores)
+    # Compute RMSE only if we have all predictions and ground truth
+    if len(scores_array) == len(gnn_scores_array) and len(scores_array) > 0:
+        rmse = float(np.sqrt(np.mean((scores_array - gnn_scores_array) ** 2)))
+    else:
+        rmse = None
     
+
     metrics = {
         'step_name': 'evaluation',
         'duration_seconds': round(evaluation_time, 4),
@@ -60,6 +69,7 @@ def evaluate_selected_graphs(
         'worst_evaluated': float(scores_array.min()) if len(scores_array) > 0 else None,
         'mean_evaluated': float(scores_array.mean()) if len(scores_array) > 0 else None,
         'std_evaluated': float(scores_array.std()) if len(scores_array) > 0 else None,
+        'rmse_gnn_vs_llm': rmse,
         'metadata': {
             'evaluation_time_per_graph': round(evaluation_time / num_graphs, 4) if num_graphs > 0 else 0,
             'evaluation_method': 'synthetic_heuristic',  #TODO
@@ -70,6 +80,7 @@ def evaluate_selected_graphs(
         f"Evaluation complete - "
         f"Best: {metrics['best_evaluated']:.4f}, "
         f"Mean: {metrics['mean_evaluated']:.4f}, "
+        f"RMSE (GNN vs LLM): {metrics['rmse_gnn_vs_llm']}, "
         f"Time: {evaluation_time:.4f}s"
     )
     

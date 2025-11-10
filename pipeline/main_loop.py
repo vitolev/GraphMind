@@ -16,10 +16,8 @@ class IterationMetrics:
     graphs_generated: int
     graphs_selected: int
     graphs_evaluated: int
-    training_samples_added: int
     best_predicted_score: float
     best_actual_score: float = None
-    gnn_retrained: bool = False
     retrain_loss: float = None
 
 @dataclass
@@ -86,12 +84,9 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
             logger.info(f"  - Graphs generated: {metrics.graphs_generated:,}")
             logger.info(f"  - Graphs selected: {metrics.graphs_selected}")
             logger.info(f"  - Graphs evaluated: {metrics.graphs_evaluated}")
-            logger.info(f"  - Training samples added: {metrics.training_samples_added}")
             logger.info(f"  - Best predicted score: {metrics.best_predicted_score:.4f}")
             logger.info(f"  - Best actual score: {metrics.best_actual_score:.4f}")
-            # if metrics.gnn_retrained:
-            #     logger.info(f"  - GNN RETRAINED (loss: {metrics.retrain_loss:.4f})")
-            
+
             iteration_time = time.time() - iteration_start
             logger.info(f"  - Iteration time: {iteration_time:.2f}s")
             
@@ -146,32 +141,26 @@ def run_single_iteration(
     logger.info(f"  ✅ Best predicted score: {best_predicted:.4f}")
     
     logger.info(f"\n[Step 3/6] Selecting top {config.eval_k_best} graphs for evaluation...")
-    selected_graphs = select_top_graphs(config, logger, good_graphs_set, predictions) 
-    # ATTENTION: check if good_graphs_set is changing throughout the interations if something is going wrong
-    logger.info(f"  ✓ Selected {selected_graphs.size()} graphs")
-    logger.info(f"  Best selected ")
-    logger.info(f"  ✓ Good graphs set size: {good_graphs_set.size()}")
+    metrics3, selected_graphs = select_top_graphs(config, logger, good_graphs_set, predictions) 
+    # ATTENTION: check if good_graphs_set is changing throughout the iterations if something is going wrong
+    logger.info(f"  ✅ Selected {selected_graphs.size()} graphs")
+    logger.info(f"  ✅ Good graphs set size: {good_graphs_set.size()}")
     
     logger.info(f"\n[Step 4/6] Evaluating selected graphs with LLM...")
     metrics4, evaluation_results = evaluate_selected_graphs(config, logger, selected_graphs, math_problems)
     best_actual = metrics4['best_evaluated']
-    logger.info(f"  ✓ Evaluated {evaluation_results.size()} graphs")
-    logger.info(f"  ✓ Best actual score: {best_actual:.4f}")
-    #state.total_evaluations_done += len(evaluation_results)
+    logger.info(f"  ✅ Evaluated {evaluation_results.size()} graphs")
+    logger.info(f"  ✅ Best actual score: {best_actual:.4f}")
     
     logger.info(f"\n[Step 5/6] Updating training dataset...")
-    num_samples_added = update_training_data(config, logger, evaluation_results, training_dataset) #To je graphset
-    state.training_dataset_size += num_samples_added
-    logger.info(f"  ✓ Added {num_samples_added} samples to training data")
+    metrics5 = update_training_data(config, logger, evaluation_results, training_dataset) #To je graphset
+    logger.info(f"  ✅ Added {metrics5['num_training_samples_added']} samples to training data")
+    logger.info(f"  ✅ Training dataset size: {metrics5['total_training_dataset_size']}")
     
-    first_loop = False
-    gnn_retrained = False
     retrain_loss = None
     logger.info(f"\n[Step 6/6] Retraining GNN models...")
     model = retrain_gnn_model(config, logger, model, training_dataset) # Correct this to be the right data
-    gnn_retrained = True
-    logger.info(f"  ✓ GNN retrained")
-    #logger.info(f"  ✓ Retrain loss: {retrain_loss:.4f}")
+    logger.info(f"  ✅ GNN retrained")
 
     # Create metrics
     metrics = IterationMetrics(
@@ -180,10 +169,8 @@ def run_single_iteration(
         graphs_generated=generated_graphs.size(),
         graphs_selected=selected_graphs.size(),
         graphs_evaluated=evaluation_results.size(),
-        training_samples_added=num_samples_added,
         best_predicted_score=best_predicted,
         best_actual_score=best_actual,
-        gnn_retrained=gnn_retrained,
         retrain_loss=retrain_loss,
     )
     

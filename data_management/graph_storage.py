@@ -350,8 +350,20 @@ def select_top_graphs(
     # Return selected graphs as a new GraphSet
     eval_graphs_set = GraphSet()
     eval_graphs_set.add_graphs(selected_graphs)
-    
-    return eval_graphs_set
+
+    metrics = {
+        'step_name': 'selection',
+        'num_graphs_selected': eval_graphs_set.size(),
+        'good_graphs_set_size': good_graphs_set.size(),
+        # Next metric is a metric about the graphs, so we take the first graph and we count how many of which nodes there are
+        'good_graphs_description': {
+            'node_type_counts': {
+                node_type: sum(1 for graph in good_graphs_set.get_all() for _, t in graph.get_nodes() if t == node_type)
+                for node_type in config.agent_types
+            }
+        }
+    }
+    return metrics, eval_graphs_set
 
 def update_training_data(
     config: Config,
@@ -378,7 +390,13 @@ def update_training_data(
     # Save updated training dataset
     save_training_dataset(training_dataset, config.data_dir, logger)
 
-    return num_added
+    metrics = { 
+        'step_name': 'training_data_update',
+        'num_training_samples_added': num_added,
+        'total_training_dataset_size': training_dataset.size()
+    }
+
+    return metrics
 
 
 if __name__ == "__main__":

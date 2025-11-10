@@ -34,7 +34,7 @@ eval_timeout_seconds: 30
 llm_model: gpt-4
 
 # Pipeline Control
-max_iterations: 1000
+max_iterations: 10
 checkpoint_frequency: 5
 
 # Paths
