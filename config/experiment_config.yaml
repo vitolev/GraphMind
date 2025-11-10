@@ -1,5 +1,5 @@
 # Graph Generation
-num_graphs_per_iteration: 100000
+num_graphs_per_iteration: 10000
 generation_strategy: random
 agent_types:
   - type_a
@@ -34,7 +34,7 @@ eval_timeout_seconds: 30
 llm_model: gpt-4
 
 # Pipeline Control
-max_iterations: 10
+max_iterations: 200
 checkpoint_frequency: 5
 
 # Paths

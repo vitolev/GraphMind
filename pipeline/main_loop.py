@@ -9,18 +9,6 @@ from typing import Any, Dict, List
 from data_management.graph_storage import GraphSet
 
 @dataclass
-class IterationMetrics:
-    """Metrics for a single iteration"""
-    iteration_num: int
-    timestamp: datetime
-    graphs_generated: int
-    graphs_selected: int
-    graphs_evaluated: int
-    best_predicted_score: float
-    best_actual_score: float = None
-    retrain_loss: float = None
-
-@dataclass
 class PipelineState:
     """Mutable state during pipeline"""
     current_iteration: int = 0
@@ -37,6 +25,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     from gnn_models.model_manager import initialize_gnn_model, retrain_gnn_model
     from evaluation.math_solver import load_math_problems
     from data_management.graph_storage import load_good_graphs_set, load_training_dataset, save_training_dataset
+    from post_processing.metrics_aggregator import create_metrics_dataframe
     
     logger.info("Initializing pipeline components...")    
     state = PipelineState()
@@ -49,7 +38,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     if state.training_dataset_size > 0:
         logger.info(f"{'='*60}")
         logger.info(f"Initial training dataset exists. Training the initial model...")
-        model = retrain_gnn_model(config, logger, model, training_dataset)
+        _, model = retrain_gnn_model(config, logger, model, training_dataset)
         logger.info(f"Model retrained on existing training data ({state.training_dataset_size} samples).")
         logger.info(f"{'='*60}")
     
@@ -80,17 +69,9 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
                 model, good_graphs_set, training_dataset, math_problems
             )
             
-            logger.info(f"\nIteration Results:")
-            logger.info(f"  - Graphs generated: {metrics.graphs_generated:,}")
-            logger.info(f"  - Graphs selected: {metrics.graphs_selected}")
-            logger.info(f"  - Graphs evaluated: {metrics.graphs_evaluated}")
-            logger.info(f"  - Best predicted score: {metrics.best_predicted_score:.4f}")
-            logger.info(f"  - Best actual score: {metrics.best_actual_score:.4f}")
-
             iteration_time = time.time() - iteration_start
             logger.info(f"  - Iteration time: {iteration_time:.2f}s")
             
-            # Store metrics
             state.iteration_history.append(metrics)
                 
         except Exception as e:
@@ -107,6 +88,10 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     
     save_training_dataset(training_dataset, config.data_dir, logger)
 
+    metrics_df = create_metrics_dataframe(state.iteration_history, config, logger)
+    
+    return metrics_df
+
 def run_single_iteration(
     iteration_num: int,
     config: Config,
@@ -116,7 +101,7 @@ def run_single_iteration(
     good_graphs_set: GraphSet,
     training_dataset: GraphSet,
     math_problems: List[Dict[str, Any]]
-) -> IterationMetrics:
+) -> Dict[str, Any]:
     """
     IDEA for this part: maybe every step should have an output of a dict metrics["step_name"] = { ... },
     at the end of the look, we also call function evaluate_loop and we get the loop
@@ -159,19 +144,19 @@ def run_single_iteration(
     
     retrain_loss = None
     logger.info(f"\n[Step 6/6] Retraining GNN models...")
-    model = retrain_gnn_model(config, logger, model, training_dataset) # Correct this to be the right data
+    metrics6, model = retrain_gnn_model(config, logger, model, training_dataset) # Correct this to be the right data
     logger.info(f"  ✅ GNN retrained")
 
-    # Create metrics
-    metrics = IterationMetrics(
-        iteration_num=iteration_num,
-        timestamp=datetime.now(),
-        graphs_generated=generated_graphs.size(),
-        graphs_selected=selected_graphs.size(),
-        graphs_evaluated=evaluation_results.size(),
-        best_predicted_score=best_predicted,
-        best_actual_score=best_actual,
-        retrain_loss=retrain_loss,
-    )
+    iteration_metrics = {
+        'iteration_num': iteration_num,
+        'timestamp': datetime.now(),
+        'step_1_generation': metrics1,
+        'step_2_prediction': metrics2,
+        'step_3_selection': metrics3,
+        'step_4_evaluation': metrics4,
+        'step_5_training_update': metrics5,
+        'step_6_retraining': metrics6,
+        'loop': {} 
+    }
     
-    return metrics
+    return iteration_metrics

@@ -109,4 +109,10 @@ def retrain_gnn_model(
     
     logger.info(f"  ✓ Training complete (loss: {loss:.4f})\n")
     
-    return model
+    metrics = { 
+        'step_name': 'retraining',
+        'training_samples': training_dataset.size(),
+        'final_loss': loss,
+    }
+
+    return metrics, model

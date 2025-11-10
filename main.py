@@ -76,10 +76,22 @@ def main():
     logger.info("=" * 60 + "\n")
     
     try:
-        run_pipeline(config, logger)
+        metrics_df = run_pipeline(config, logger)
         logger.info("\n" + "=" * 60)
         logger.info("PIPELINE COMPLETED SUCCESSFULLY")
         logger.info("=" * 60)
+
+        logger.info("\n" + "=" * 60)
+        logger.info("RUNNING POST-PROCESSING ANALYSIS")
+        logger.info("=" * 60 + "\n")
+        
+        from post_processing.analytics import run_analytics
+        run_analytics(metrics_df, config, logger)
+        
+        logger.info("\n" + "=" * 60)
+        logger.info("POST-PROCESSING COMPLETE")
+        logger.info("=" * 60)
+
     except Exception as e:
         logger.error(f"Pipeline failed: {e}", exc_info=True)
         raise

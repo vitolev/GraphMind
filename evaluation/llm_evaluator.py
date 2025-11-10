@@ -43,6 +43,8 @@ def evaluate_selected_graphs(
             
             graph.set_llm_score(score, time=0.1)
             scores.append(score)
+
+            gnn_scores.append(graph.get_gnn_score())
             
         except Exception as e:
             logger.warning(f"Error evaluating graph: {e}")

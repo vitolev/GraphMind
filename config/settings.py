@@ -81,3 +81,8 @@ class Config:
         """Save config to YAML file"""
         with open(path, 'w') as f:
             yaml.dump(self.to_dict(), f, default_flow_style=False)
+
+    @property
+    def analytics_dir(self) -> Path:
+        """Directory for analytics outputs"""
+        return self.log_dir / "analytics"
