@@ -23,6 +23,8 @@ from typing import List, Dict, Any
 from config.settings import Config
 import torch
 from torch_geometric.data import Data, HeteroData
+import networkx as nx
+import matplotlib.pyplot as plt
 
 class Graph:
     """Graph data structure"""
@@ -144,6 +146,17 @@ class Graph:
         else:
             raise ValueError(f"Invalid type '{type}' specified. Use 'Data' or 'HeteroData'.")
         
+    def visualize(self) -> None:
+        """Visualize the graph using networkx and matplotlib"""
+        G = nx.DiGraph()
+        for node_id, node_type in self.nodes:
+            G.add_node(node_id, label=node_type)
+        G.add_edges_from(self.edges)
+
+        pos = nx.planar_layout(G)
+        labels = nx.get_node_attributes(G, 'label')
+        nx.draw(G, pos, with_labels=True, labels=labels, node_size=500, font_size=8, arrows=True)
+        plt.show()
 
 class GraphSet:
     """Container for graphs sorted """
