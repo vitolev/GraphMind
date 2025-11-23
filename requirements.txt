@@ -2,3 +2,9 @@ datasets
 torch
 matplotlib
 torch_geometric
+
+transformers
+groq
+grandalf
+
+# pip install -U langchain langchain-core langchain-community langsmith
