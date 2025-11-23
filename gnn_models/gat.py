@@ -13,8 +13,8 @@ class GATNet(torch.nn.Module):
         super().__init__()
         self.config = config
         self.logger = logger
+        self.is_trained = False
         self.logger.info("Initializing GATNet model...")
-
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -22,18 +22,18 @@ class GATNet(torch.nn.Module):
         hidden_dim = self.config.gnn_hidden_dim
         heads = self.config.gnn_num_heads 
         num_layers = self.config.gnn_num_layers
+        dropout = self.config.gnn_dropout
 
         self.gat_layers = torch.nn.ModuleList()
 
         # First layer
-        self.gat_layers.append(GATConv(in_dim, hidden_dim, heads=heads, concat=True))
+        self.gat_layers.append(GATConv(in_dim, hidden_dim, heads=heads, concat=True, dropout=dropout))
 
         # Hidden layers
         for _ in range(num_layers - 2):
-            self.gat_layers.append(GATConv(hidden_dim * heads, hidden_dim, heads=heads, concat=True))
-
+            self.gat_layers.append(GATConv(hidden_dim * heads, hidden_dim, heads=heads, concat=True, dropout=dropout))
         # Last GAT layer (output per node, concat=False)
-        self.gat_layers.append(GATConv(hidden_dim * heads, hidden_dim, heads=1, concat=False))
+        self.gat_layers.append(GATConv(hidden_dim * heads, hidden_dim, heads=1, concat=False, dropout=dropout))
 
         # MLP to map last-node embedding → scalar [0–1]
         self.mlp = torch.nn.Sequential(
@@ -52,17 +52,22 @@ class GATNet(torch.nn.Module):
         for gat in self.gat_layers:
             x = F.elu(gat(x, edge_index))
 
-        # extract embedding of final node
-        final_node_idx = data.final_node.item()   # scalar index
-        graph_embedding = x[final_node_idx]
+        # final node embeddings for each graph in batch
+        final_node_mask = data.final_node_mask.to(self.device)   # shape [num_nodes]
+        final_nodes = x[final_node_mask]                         # shape [batch_size, hidden_dim]
 
-        # predict scalar
-        score = self.mlp(graph_embedding)
+        # predict scalar for each graph
+        score = self.mlp(final_nodes)    # shape [batch_size, 1]
         return score
 
     @torch.no_grad()
-    def predict(self, data_list):
+    def predict(self, data_list: List[Data]) -> List[float]:
         self.eval()
+        if not self.is_trained:
+            self.logger.warning("Model not trained yet, returning random predictions.")
+            import random
+            return [random.random() for _ in data_list]
+
         preds = []
         for data in data_list:
             data = data.to(self.device)
@@ -96,6 +101,8 @@ class GATNet(torch.nn.Module):
             if epoch % 10 == 0 or epoch == 1:
                 self.logger.info(f"Epoch {epoch}/{epochs}, Loss: {avg_loss:.4f}")
         
+        self.is_trained = True
+
         # Return final loss
         return avg_loss
     

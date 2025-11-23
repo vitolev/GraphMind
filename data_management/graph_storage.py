@@ -67,21 +67,22 @@ class Graph:
             self.edges == other.edges
         )
     
-    def to_pyg(self, config: Config, type="Data"):
+    def to_pyg(self, config: Config):
         """
         Convert to a PyG Data or HeteroData object.
 
         Args:
-            config: Config object with `config.agent_types` (list of all node types).
-            type (str): If "Data" returns torch_geometric.data.Data (homogeneous),
-                        if "HeteroData" returns torch_geometric.data.HeteroData (heterogeneous),
-                        otherwise raises ValueError.
+            config: Config object with `config.data_format` with value
+                    "Data" returns torch_geometric.data.Data (homogeneous),
+                    "HeteroData" returns torch_geometric.data.HeteroData (heterogeneous),
+                    otherwise raises ValueError.
 
         Returns:
             torch_geometric.data.Data or torch_geometric.data.HeteroData
         """
 
         agent_types = NODE_TYPES
+        type = config.data_format
 
         # --- Case 1: Homogeneous Data ---
         if type == "Data":
@@ -97,55 +98,51 @@ class Graph:
                 x[i, type_to_idx[node_type]] = 1.0
 
             data = Data(x=x, edge_index=edge_index, y=torch.tensor([self.llm_score]))
+            
+            final_node_mask = torch.zeros(len(self.nodes), dtype=torch.bool)
+            final_node_idx = next(
+                (i for i, (_, t) in enumerate(self.nodes) if t == "END"),
+                len(self.nodes) - 1
+            )
+            final_node_mask[final_node_idx] = True
+            data.final_node_mask = final_node_mask
+
             return data
 
         # --- Case 2: Heterogeneous Data ---
         elif type == "HeteroData":
             hetero_data = HeteroData()
 
-            # Group nodes by type
+            # ---- FAST: Build node groups & local index maps in one pass ----
             nodes_by_type = {t: [] for t in agent_types}
+            node_id_to_local = {}
+
             for node_id, node_type in self.nodes:
-                if node_type not in nodes_by_type:
-                    raise ValueError(f"Unknown node type '{node_type}' not in NODE_TYPES")
+                local_idx = len(nodes_by_type[node_type])
                 nodes_by_type[node_type].append(node_id)
+                node_id_to_local[node_id] = (node_type, local_idx)
 
-            # Add nodes for each type
+            # Assign node features (1-dimensional)
             for node_type, node_ids in nodes_by_type.items():
-                num_nodes = len(node_ids)
-                hetero_data[node_type].x = torch.ones((num_nodes, 1), dtype=torch.float)
+                hetero_data[node_type].x = torch.ones((len(node_ids), 1), dtype=torch.float)
 
-            # Build edges by (src_type, dst_type)
-            # Initialize edge storage for heterogeneous case
+            # ---- FAST: Collect edges by type without preinitializing everything ----
             edges_by_type = {}
-            for src_agent_type in agent_types:
-                for dst_agent_type in agent_types:
-                    edges_by_type[(src_agent_type, "to", dst_agent_type)] = []  # We use "to" as the only relation (edge type)
-
-            # Map global node IDs to (type, local index)
-            node_id_to_type_idx = {node_id: (node_type, i) 
-                                for node_type, ids in nodes_by_type.items() 
-                                for i, node_id in enumerate(ids)}
 
             for src_id, dst_id in self.edges:
-                if src_id not in node_id_to_type_idx or dst_id not in node_id_to_type_idx:
-                    raise ValueError(f"Edge references unknown node ID: ({src_id}, {dst_id})")
-                src_type, src_idx = node_id_to_type_idx[src_id]
-                dst_type, dst_idx = node_id_to_type_idx[dst_id]
-                edge_type = (src_type, "to", dst_type)
-                edges_by_type[edge_type].append((src_idx, dst_idx))
+                src_type, src_idx = node_id_to_local[src_id]
+                dst_type, dst_idx = node_id_to_local[dst_id]
 
-            # Add edges to HeteroData
-            for (src_type, rel, dst_type), edge_list in edges_by_type.items():
-                if len(edge_list) > 0:
-                    edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
-                else:
-                    edge_index = torch.empty((2, 0), dtype=torch.long)
-                hetero_data[(src_type, rel, dst_type)].edge_index = edge_index
+                key = (src_type, "to", dst_type)
+                if key not in edges_by_type:
+                    edges_by_type[key] = []
+                edges_by_type[key].append((src_idx, dst_idx))
 
-            # Store label and evaluation info globally
+            # ---- Only add edge types that actually exist ----
+            for key, edge_list in edges_by_type.items():
+                hetero_data[key].edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+
             hetero_data.y = torch.tensor([self.llm_score], dtype=torch.float)
-            
             return hetero_data
         
         #-- Invalid type specified ---
@@ -172,6 +169,10 @@ class GraphSet:
 
     def get(self, index: int) -> Graph:
         return self.graphs[index]
+    
+    def contains(self, graph: Graph) -> bool:
+        """Check if a graph is already in the set"""
+        return any(g == graph for g in self.graphs)
     
     def sort_by_scores(self) -> None:
         """Sort graphs by llm_score and gnn_score descending"""
@@ -209,11 +210,11 @@ class GraphSet:
         if len(self.graphs) > max_size:
             self.graphs = self.graphs[:max_size]
 
-    def to_pyg(self, config: Config, type="Data"):
+    def to_pyg(self, config: Config):
         """Convert all graphs to PyG Data or HeteroData objects"""
         pyg_graphs = []
         for graph in self.graphs:
-            pyg_graph = graph.to_pyg(config, type=type)
+            pyg_graph = graph.to_pyg(config)
             pyg_graphs.append(pyg_graph)
         return pyg_graphs
 
@@ -419,29 +420,14 @@ def update_training_data(
 
 
 if __name__ == "__main__":
-    # Sample graph for testing
     sample_graph = Graph(
-        nodes=[(0, 'A'), (1, 'B'), (2, 'A')],
+        nodes=[(0, 'START'), (1, 'Solver'), (2, 'END')],
         edges=[(0, 1), (1, 2)],
         gnn_score=0.8,
         llm_score=0.9,
         time_evaluating=1.2
     )
 
-    # Define a sample config
-    sample_config = Config()
-    sample_config.agent_types = ['A', 'B', 'C']
-
-    # Convert to PyG Data
-    pyg_data = sample_graph.to_pyg(sample_config, type="Data")
-    print(pyg_data.x)
-    print(pyg_data.edge_index)
-    print(pyg_data.y)
-
-    pyg_data_hetero = sample_graph.to_pyg(sample_config, type="HeteroData")
-    print(pyg_data_hetero)
-    for node_type in pyg_data_hetero.node_types:
-        print(f"Node type: {node_type}, x: {pyg_data_hetero[node_type].x}")
-    for edge_type in pyg_data_hetero.edge_types:
-        print(f"Edge type: {edge_type}, edge_index: {pyg_data_hetero[edge_type].edge_index}")
+    hetData = sample_graph.to_pyg(Config(data_format="HeteroData"))
+    print(hetData)
 

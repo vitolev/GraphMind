@@ -1,3 +1,10 @@
+import sys
+import os
+
+# Add parent directory to sys.path
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(parent_dir)
+
 import logging
 import random
 from typing import Dict, Any, Tuple, Optional
@@ -53,8 +60,14 @@ def _random_strategy(
         try:
             graph = _random_graph(config.max_depth, config.max_nodes)
             if len(graph.get_nodes()) > config.max_nodes:
+                # Graph exceeds max nodes, skip
                 continue
-            # TODO: Check for duplicates in training dataset
+            if generated_graphs.contains(graph):                            #
+                # Duplicate graph, skip                                     #  These duplication checks are costly because it has to check for every element
+                continue                                                    #  in the GraphSet, which uses list internally.
+            if training_dataset and training_dataset.contains(graph):       #  TODO: check if this is a bottleneck and maybe change to set internally.
+                # Duplicate of training data, skip                          #
+                continue
             generated_graphs.add_graph(graph)
             
         except Exception as e:
@@ -236,6 +249,8 @@ def _random_graph(max_depth=2, max_nodes=20) -> Graph:
 if __name__ == "__main__":
     start_time = time.time()
     g = _random_graph(max_depth=3, max_nodes=20)
+    hetData = g.to_pyg(Config(data_format="HeteroData"))
     end_time = time.time()
-    print(f"Graph generation took {end_time - start_time:.8f} seconds")
+
+    print(hetData)
     g.visualize()

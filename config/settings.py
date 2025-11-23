@@ -13,8 +13,10 @@ class Config:
     max_nodes: int = 20
     max_depth: int = 2
 
-    # GNN Configuration
     gnn_model_type: str = "linear_regression_gnn"
+    data_format: str = "Data"  # Options: "Data" or "HeteroData"
+
+    # GNN Configuration
     gnn_hidden_dim: int = 128
     gnn_num_layers: int = 3
     gnn_num_heads: int = 8

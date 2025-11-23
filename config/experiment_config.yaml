@@ -4,7 +4,8 @@ generation_strategy: random
 max_nodes: 20
 max_depth: 1
 
-gnn_model_type: linear_regression_gnn
+gnn_model_type: gat
+data_format: Data
 
 # GNN Configuration
 gnn_hidden_dim: 128
