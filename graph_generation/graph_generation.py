@@ -3,6 +3,7 @@ import random
 from typing import Dict, Any, Tuple, Optional
 from config.settings import Config
 from data_management.graph_storage import Graph, GraphSet
+from config.nodes import Node, NODE_TYPES, RULES, DEPTH_INCREASE_NODES
 import networkx as nx
 import time
 
@@ -33,11 +34,7 @@ def generate_graph_batch(
         'step_name': 'generation',
         'duration_seconds': round(duration, 4),
         'num_samples': num_generated,
-        'strategy': strategy,
-        'metadata': {
-            'node_types': config.agent_types,
-            'num_graphs_per_iteration': config.num_graphs_per_iteration,
-        }
+        'strategy': strategy
     }
     
     return metrics, graphset
@@ -51,22 +48,13 @@ def _random_strategy(
     generated_graphs = GraphSet()
     
     for graph_idx in range(config.num_graphs_per_iteration):
-        if (graph_idx + 1) % 10000 == 0:
+        if (graph_idx + 1) % 1000 == 0:
             logger.debug(f"Generated {graph_idx + 1} / {config.num_graphs_per_iteration} graphs")
         try:
-            num_nodes = random.randint(config.min_nodes, config.max_nodes)
-            
-            edge_probability = random.uniform(0.1, 0.5)
-            nx_graph = nx.gnp_random_graph(num_nodes, edge_probability)
-            
-            nodes_with_types = [
-                (node_id, random.choice(config.agent_types))
-                for node_id in nx_graph.nodes()
-            ]
-            
-            edges = list(nx_graph.edges())
-            
-            graph = Graph(nodes=nodes_with_types, edges=edges)
+            graph = _random_graph(config.max_depth, config.max_nodes)
+            if len(graph.get_nodes()) > config.max_nodes:
+                continue
+            # TODO: Check for duplicates in training dataset
             generated_graphs.add_graph(graph)
             
         except Exception as e:
@@ -74,3 +62,180 @@ def _random_strategy(
             continue
     
     return generated_graphs
+
+# ---------------------------------------
+# Random graph builder
+# ---------------------------------------
+def _build_random_graph(max_depth=2, max_nodes=20):
+    start = Node("START")
+
+    def _pick_random_child(node_type):
+        allowed = RULES[node_type]["allowed_children"]
+        return random.choice(allowed)
+    
+    def _pick_no_depth_increase_child(node_type):
+        allowed = [child for child in RULES[node_type]["allowed_children"] if child not in DEPTH_INCREASE_NODES]
+        return random.choice(allowed)
+
+    def _pick_end_or_solvers(node_type):
+        allowed = RULES[node_type]["allowed_children"]
+        if "END" in allowed:
+            return "END"
+        else:
+            solvers = ["Solver", "Python_solver"]
+            return random.choice(solvers)
+
+    def _rec(node, depth, max_depth, remaining_nodes):
+        node_type = node.type_name
+        rule = RULES[node_type]
+        num_branches = rule["branches"]
+
+        # For multi-branch nodes like Decompose_X or Split
+        if node_type in ["Decompose_2", "Decompose_3", "Decompose_4", "Split"]:
+            depth += 1
+            children_to_combine = []
+            for _ in range(num_branches):
+                if remaining_nodes <= num_branches + 1:     # +1 for comining later on
+                    child_type = _pick_end_or_solvers(node_type) # Will pick only solvers (END is forbidden here)
+                    child = Node(child_type)
+                    node.add_child(child)
+                    children_to_combine.append(child)
+                else:
+                    if depth == max_depth:
+                        # Allow only nodes that dont lead to further depth increase
+                        child_type = _pick_no_depth_increase_child(node_type)
+                    else:
+                        child_type = _pick_random_child(node_type)   # these node_types for sure do not have "END" as allowed child, so no need for explicit check
+                    child = _rec(Node(child_type), depth, max_depth, remaining_nodes // (num_branches + 1))
+                    node.add_child(child)
+                    children_to_combine.append(child)
+                
+            # After branches are generated, attach Combine_all to merge them
+            depth -= 1
+            combine_all_node = Node("Combine_all")
+            for child in children_to_combine:
+                # Find the last node in each branch to connect to Combine_all
+                last_node = child
+                while last_node.children:
+                    last_node = last_node.children[0]
+                last_node.add_child(combine_all_node)
+
+            if remaining_nodes <= num_branches + 1:
+                child_type = _pick_end_or_solvers("Combine_all") # Will pick only solvers (END is forbidden here)
+                child = Node(child_type)
+                combine_all_node.add_child(child)
+            else:
+                # Continue building from Combine_all
+                _rec(combine_all_node, depth, max_depth, remaining_nodes // (num_branches + 1))
+
+            # Return the current node
+            return node
+
+        # For Validator
+        if node_type == "Validator":
+            # Two branches: True_pass and False_pass
+            true_node = Node("True_pass")   # True branch just passes through
+            if remaining_nodes <= 2:    # 1 for false and 1 for combine_any
+                false_child_type = _pick_end_or_solvers("False_pass") # Will pick only solvers (END is forbidden here)
+                false_node = Node("False_pass")
+                false_node.add_child(Node(false_child_type))
+            else:
+                false_node = _rec(Node("False_pass"), depth + 1, max_depth, remaining_nodes // 2) # False branch continues with recursive build
+            node.add_child(true_node)
+            node.add_child(false_node)
+
+            # Combine both branches with Combine_any
+            combine_any_node = Node("Combine_any")
+            true_node.add_child(combine_any_node)
+
+            # Attach the last node of false branch to Combine_any
+            last_false = false_node
+            while last_false.children:
+                last_false = last_false.children[0]
+            last_false.add_child(combine_any_node)
+
+            if remaining_nodes <= 2:
+                child_type = _pick_end_or_solvers("Combine_any")
+                child = Node(child_type)
+                combine_any_node.add_child(child)
+            else:
+                # Continue building from Combine_any
+                _rec(combine_any_node, depth, max_depth, remaining_nodes // 2)
+
+            # Return the current validator node
+            return node
+
+        # For other nodes: False_pass, Solver, Python_solver, Explain, Extract_topic, Combine_all, Combine_any
+        if remaining_nodes <= 1:
+            # Only allow END or solvers to finish the graph
+            child_type = _pick_end_or_solvers(node_type)
+            if child_type != "END":
+                child = Node(child_type)
+                node.add_child(child)
+                return node
+            else:
+                # If END is picked, dont add it here, will be added at the end. Just return current node
+                return node
+        
+        if depth == max_depth:
+            child_type = _pick_no_depth_increase_child(node_type)
+        else:
+            child_type = _pick_random_child(node_type)
+
+        if child_type != "END":
+            child = _rec(Node(child_type), depth, max_depth, remaining_nodes - 1)
+            node.add_child(child)
+        return node
+
+    # Start the recursive building process
+    _rec(start, 0, max_depth, max_nodes)
+
+    # Finally, add the END node to the last node
+    end = Node("END")
+    last_node = start
+    while last_node.children:
+        last_node = last_node.children[0]
+    last_node.add_child(end)
+    return start
+
+def _generate_nx_graph(node, graph=None, parent=None, uid=None):
+    if graph is None:
+        graph = nx.DiGraph()
+    
+    # Assign a unique id if not given
+    if uid is None:
+        uid = id(node)  # use Python's unique object id
+    
+    # Add node with a label for visualization
+    graph.add_node(uid, label=node.type_name)
+    
+    if parent:
+        graph.add_edge(parent, uid)
+    
+    for child in node.children:
+        _generate_nx_graph(child, graph, uid)
+    
+    return graph
+
+def _random_graph(max_depth=2, max_nodes=20) -> Graph:
+    graph = _build_random_graph(max_depth, max_nodes)
+    nx_graph = _generate_nx_graph(graph)
+
+    # Convert to Graph object
+    nodes_with_types = [(node, data['label']) for node, data in nx_graph.nodes(data=True)]
+    edges = list(nx_graph.edges())
+
+    # Remap node ids to a contiguous range starting from 0
+    id_mapping = {old_id: new_id for new_id, (old_id, _) in enumerate(nodes_with_types)}
+    nodes_with_types = [(id_mapping[old_id], type_name) for old_id, type_name in nodes_with_types]
+    edges = [(id_mapping[src], id_mapping[dst]) for src, dst in edges]
+
+    graph_obj = Graph(nodes=nodes_with_types, edges=edges)
+    return graph_obj
+
+if __name__ == "__main__":
+    start_time = time.time()
+    g = _random_graph(max_depth=3, max_nodes=20)
+    end_time = time.time()
+    print(f"Graph generation took {end_time - start_time:.8f} seconds")
+    g.visualize()

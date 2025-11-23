@@ -1,16 +1,8 @@
 # Graph Generation
 num_graphs_per_iteration: 25000
 generation_strategy: random
-agent_types:
-  - type_a
-  - type_b
-  - type_c
-min_nodes: 3
 max_nodes: 20
-agent_types:
-  - solver
-  - verifier
-  - coordinator
+max_depth: 1
 
 gnn_model_type: linear_regression_gnn
 

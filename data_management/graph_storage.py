@@ -25,6 +25,7 @@ import torch
 from torch_geometric.data import Data, HeteroData
 import networkx as nx
 import matplotlib.pyplot as plt
+from config.nodes import NODE_TYPES
 
 class Graph:
     """Graph data structure"""
@@ -58,6 +59,14 @@ class Graph:
     def get_time_evaluating(self) -> float:
         return self.time_evaluating
     
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, Graph):
+            return False
+        return (
+            self.nodes == other.nodes and
+            self.edges == other.edges
+        )
+    
     def to_pyg(self, config: Config, type="Data"):
         """
         Convert to a PyG Data or HeteroData object.
@@ -72,10 +81,7 @@ class Graph:
             torch_geometric.data.Data or torch_geometric.data.HeteroData
         """
 
-        # Ensure we have agent types
-        agent_types = getattr(config, "agent_types", None)
-        if agent_types is None:
-            raise ValueError("config.agent_types must be provided for type encoding.")
+        agent_types = NODE_TYPES
 
         # --- Case 1: Homogeneous Data ---
         if type == "Data":
@@ -101,7 +107,7 @@ class Graph:
             nodes_by_type = {t: [] for t in agent_types}
             for node_id, node_type in self.nodes:
                 if node_type not in nodes_by_type:
-                    raise ValueError(f"Unknown node type '{node_type}' not in config.agent_types")
+                    raise ValueError(f"Unknown node type '{node_type}' not in NODE_TYPES")
                 nodes_by_type[node_type].append(node_id)
 
             # Add nodes for each type
@@ -372,7 +378,7 @@ def select_top_graphs(
         'good_graphs_description': {
             'node_type_counts': {
                 node_type: sum(1 for graph in good_graphs_set.get_all() for _, t in graph.get_nodes() if t == node_type)
-                for node_type in config.agent_types
+                for node_type in NODE_TYPES
             }
         }
     }

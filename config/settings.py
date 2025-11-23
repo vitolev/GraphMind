@@ -8,13 +8,11 @@ class Config:
     """Single configuration object for the entire pipeline"""
     
     # Graph Generation
-    num_graphs_per_iteration: int = 100000
+    num_graphs_per_iteration: int = 10000
     generation_strategy: str = "random"
-    agent_types: List[str] = field(default_factory=lambda: ["type_a", "type_b", "type_c"])
-    min_nodes: int = 3
     max_nodes: int = 20
-    agent_roles: List[str] = field(default_factory=lambda: ["solver", "verifier", "coordinator"])
-    
+    max_depth: int = 2
+
     # GNN Configuration
     gnn_model_type: str = "linear_regression_gnn"
     gnn_hidden_dim: int = 128
