@@ -52,7 +52,6 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     logger.info(f"  - Select top-K: {config.top_k_to_keep}")
     logger.info(f"  - Evaluate best: {config.eval_k_best}")
     logger.info(f"  - Max iterations: {config.max_iterations}")
-    logger.info(f"  - Retrain frequency: {config.retrain_frequency}")
     logger.info(f"{'='*60}\n")
     
     for iteration_num in range(config.max_iterations):

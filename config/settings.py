@@ -32,12 +32,10 @@ class Config:
     
     # Evaluation
     num_eval_problems: int = 10
-    problem_difficulties: List[str] = field(default_factory=lambda: ["easy", "medium", "hard"])
     eval_timeout_seconds: int = 30
     llm_model: str = "gpt-4"
     
     # Pipeline Control
-    retrain_frequency: int = 10
     max_iterations: int = 1000
     checkpoint_frequency: int = 5
     
