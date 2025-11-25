@@ -4,31 +4,207 @@ from typing import Dict, List, Optional, Tuple, Any, TypedDict, Annotated, Liter
 from groq import Groq
 from langgraph.graph import StateGraph, START, END
 
+# ============================================================================
+# SYSTEM PROMPTS FOR EACH NODE TYPE
+# ============================================================================
 
+MESSAGE_TEMPLATES = {
+       "Solver": {
+        "system": """You are an expert problem solver. Your task is to
+        read the task carefully and provide just the answer to the problem
+        that will be evaluated based on only the corrected expression or number
+        or whatever the problem requires as an answer.""",
+        
+        "user": """Problem: {problem}
+
+        Your answer should be in the following format, the answers with more than 100 characters will be evaluated as incorrect:
+        <SOLUTION>
+        [Your detailed solution here]
+        </SOLUTION>""",
+        "assistant_start": "The final solution to this problem is: <SOLUTION> "
+    },
+
+    "Solver-slow": {
+        "system": """You are an expert problem solver. Your task is to:
+1. Understand the problem clearly
+2. Break it down into manageable steps
+3. Provide a clear, logical solution
+4. Explain your reasoning
+
+Be concise but thorough. Focus on practical solutions.""",
+        
+        "user": """Problem: {problem}
+
+Your answer should be in the following format:
+<SOLUTION>
+[Your detailed solution here]
+</SOLUTION>""",
+        
+        "assistant_start": "The solution to this problem is:\n<SOLUTION>\n"
+    },
+
+    "Extract_topic": {
+        "system": """You are an expert at identifying key information. Your task is to:
+1. Read the input carefully
+2. Extract the main topic or central theme
+3. Identify 2-3 key subtopics
+4. Summarize the essence in 1-2 sentences
+
+Be precise and focus on the most important information.""",
+        
+        "user": """Content: {problem}
+
+Extract the main topic in the following format:
+<TOPIC>
+[Main topic here]
+</TOPIC>
+
+<SUBTOPICS>
+[Subtopics here]
+</SUBTOPICS>""",
+        
+        "assistant_start": "The main topic is:\n<TOPIC>\n"
+    },
+
+    "Validator": {
+        "system": """You are a quality assurance expert. Your task is to:
+1. Review the provided information
+2. Check for logical consistency
+3. Identify any gaps or issues
+4. Provide a validation score (0-100)
+5. Suggest improvements if needed
+
+Be fair but thorough in your assessment.""",
+        
+        "user": """Information to validate: {problem}
+
+Provide validation in the following format:
+<VALIDATION>
+SCORE: [0-100]
+STATUS: [VALID/INVALID]
+ISSUES: [List any issues or "NONE"]
+IMPROVEMENTS: [Suggestions or "NONE"]
+</VALIDATION>""",
+        
+        "assistant_start": "Validation result:\n<VALIDATION>\n"
+    },
+
+    "Combine_all": {
+        "system": """You are an expert synthesizer. Your task is to:
+1. Review all the provided inputs
+2. Find common themes and connections
+3. Merge insights without losing important details
+4. Create a cohesive summary
+5. Highlight the most valuable insights
+
+Be integrative and create meaningful connections.""",
+        
+        "user": """Review and combine these results:
+{problem}
+
+Provide a synthesis in the following format:
+<SYNTHESIS>
+[Your combined analysis here]
+</SYNTHESIS>
+
+<KEY_INSIGHTS>
+[Most valuable insights]
+</KEY_INSIGHTS>""",
+        
+        "assistant_start": "Combined synthesis:\n<SYNTHESIS>\n"
+    },
+
+    "Python_executor": {
+        "system": """You are an expert Python programmer. Your task is to:
+1. Understand the problem completely
+2. Write a complete, executable Python program to solve it
+3. Include all necessary imports and error handling
+4. Ensure the program produces the solution as output
+5. The program should be ready to run immediately
+
+Write ONLY the Python code, nothing else. No markdown, no explanations.""",
+        
+        "user": """Problem: {problem}
+
+Write a Python program to solve this. The program should print the solution.""",
+        
+        "assistant_start": None  # Python executor doesn't need pre-filled assistant
+    },
+
+    "Default": {
+        "system": """You are a helpful assistant. Your task is to:
+1. Understand the request
+2. Provide a thoughtful response
+3. Be clear and concise
+4. Add relevant context
+5. Offer next steps if applicable
+
+Be helpful and accurate.""",
+        
+        "user": "{problem}",
+        
+        "assistant_start": "Here is my response:\n"
+    }
+}
 
 # ============================================================================
 # LLM SETUP - GROQ FREE VERSION
 # ============================================================================
 
-
 client = Groq()
 
+def generate_response(message: str, node_type: str = "Default", model: str = "llama-3.1-8b-instant", use_assistant_start = True) -> str:
 
+    template = MESSAGE_TEMPLATES.get(node_type, MESSAGE_TEMPLATES["Default"])
+    system_prompt = template["system"]
+    
+    # Format the user message from template
+    user_message = template["user"].format(problem=message)
+    
+    print(f"   🧠 Groq LLM call")
+    print(f"      Node Type: {node_type}")
+    print(f"      Message: {message[:100]}...")
+    
+    import time
 
-def generate_response(message: str, model: str = "openai/gpt-oss-120b") -> str:
-    """Generate LLM response using Groq"""
-    print(f"   🧠 Groq LLM call with model '{model}' with message {message} ")
-    return (f"   🧠 Groq LLM call with model '{model}' with message {message} ")
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=[{"role": "user", "content": message}],
-            model=model,
-        )
-        return chat_completion.choices[0].message.content
-    except Exception as e:
-        print(f"Error calling Groq: {e}")
-        return f"Error: {str(e)}"
+    max_retries = 5
+    retry_delay = 5  # default retry delay in seconds
 
+    for attempt in range(max_retries):
+        try:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+            
+            # Add assistant start if specified and available
+            if use_assistant_start and template.get("assistant_start"):
+                messages.append({
+                    "role": "assistant",
+                    "content": template["assistant_start"]
+                })
+            
+            chat_completion = client.chat.completions.create(
+                messages=messages,
+                model=model,
+                max_completion_tokens=256,
+            )
+            
+            response = chat_completion.choices[0].message.content
+            
+            # If we used assistant_start, prepend it to the response
+            if use_assistant_start and template.get("assistant_start"):
+                response = template["assistant_start"] + response
+            
+            return response
+        except Exception as e:
+            if 'limit' in str(e).lower():
+                retry_after = getattr(e, 'retry_after', None)
+                wait = retry_after if retry_after is not None else retry_delay
+                print(f"Rate limited, retrying after {wait}s")
+                time.sleep(wait)
+            else:
+                raise RuntimeError("Max retries reached due to rate limiting")
 
 
 # ============================================================================
@@ -38,7 +214,6 @@ def generate_response(message: str, model: str = "openai/gpt-oss-120b") -> str:
 
 @dataclass
 class GlobalKnowledge:
-    """Global knowledge - stores all execution results"""
     entries: Dict[int, Any] = field(default_factory=dict)
     
     def add(self, node_id: int, data: Any):
@@ -50,34 +225,28 @@ class GlobalKnowledge:
 
 
 class AgentState(TypedDict):
-    """LangGraph state with reducers for concurrent updates"""
     problem: Annotated[list, operator.add]
     global_knowledge: GlobalKnowledge
     result: Annotated[list, operator.add]
     node_type: Optional[str]  # Current node type for routing
     node_id: Optional[int]    # Current node ID for routing
 
-
-
 # ============================================================================
 # NODE FUNCTIONS - PURE LOGIC SEPARATED
 # ============================================================================
 
-
 def solver_node(state: AgentState) -> dict:
-    """Solver node - uses Groq LLM"""
     node_id = state.get("node_id")
     print(f"\n🔧 Solver-{node_id}: Using Groq LLM")
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
     prompt = f"Solve this problem: {problem_text}"
-    response = generate_response(prompt)
+    response = generate_response(prompt, node_type="Solver")
     state['global_knowledge'].add(node_id, response)
-    print(f"   Response: {response[:100]}...")
+    print(f"   Response: {response}...")
     return {"result": [response]}
 
 
 def extract_topic_node(state: AgentState) -> dict:
-    """Extract topic node - uses Groq LLM"""
     node_id = state.get("node_id")
     print(f"\n📖 Extract_topic-{node_id}: Using Groq LLM")
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
@@ -89,7 +258,6 @@ def extract_topic_node(state: AgentState) -> dict:
 
 
 def validator_node(state: AgentState) -> dict:
-    """Validator node - validates state"""
     node_id = state.get("node_id")
     print(f"\n✓ Validator-{node_id}: Validating")
     is_valid = True
@@ -98,7 +266,6 @@ def validator_node(state: AgentState) -> dict:
 
 
 def combine_all_node(state: AgentState, combine_all_edges: dict) -> dict:
-    """Combine all node - merges results from parallel nodes"""
     node_id = state.get("node_id")
     print(f"\n🔗 Combine_all-{node_id}: Merging with Groq LLM")
     incoming = combine_all_edges.get(node_id, [])
@@ -107,21 +274,18 @@ def combine_all_node(state: AgentState, combine_all_edges: dict) -> dict:
     for inc_id in incoming:
         data = state['global_knowledge'].get(inc_id)
         if data:
-            combined_data.append(str(data)[:100])
+            combined_data.append(str(data)[:500])  # Limit size for prompt
     
     combined_text = " ".join(combined_data)
     prompt = f"Combine and summarize: {combined_text}"
     response = generate_response(prompt)
     state['global_knowledge'].add(node_id, response)
-    print(f"   Combined: {response[:100]}...")
+    print(f"   Combined: {response[:500]}...")
     return {"result": [response]}
-
-
 
 # ============================================================================
 # ROUTING FUNCTIONS - FOR CONDITIONAL EDGES
 # ============================================================================
-
 
 def route_by_node_type(state: AgentState, id_to_type: dict) -> str:
     """Route to appropriate node based on type"""
@@ -145,12 +309,9 @@ def route_by_node_type(state: AgentState, id_to_type: dict) -> str:
     else:
         return END
 
-
-
 # ============================================================================
 # BUILD LANGGRAPH FROM STRUCTURE
 # ============================================================================
-
 
 def build_langgraph(nodes: List[Tuple[int, str]], edges: List[Tuple[int, int]]):
     """Build LangGraph using LangGraph's native routing - handles custom node types"""
@@ -356,24 +517,7 @@ def visualize_graph_png(graph, filename: str = "langgraph_diagram.png", method: 
         method: "api" (mermaid.ink), "pyppeteer" (local browser), or "graphviz"
     """
     try:
-        if method == "api":
-            # Use Mermaid.ink API (no additional dependencies)
-            from langchain_core.runnables.graph import MermaidDrawMethod
-            png_data = graph.get_graph().draw_mermaid_png(
-                draw_method=MermaidDrawMethod.API
-            )
-        elif method == "pyppeteer":
-            # Use Pyppeteer (requires: pip install pyppeteer)
-            from langchain_core.runnables.graph import MermaidDrawMethod, CurveStyle, NodeColors
-            import nest_asyncio
-            nest_asyncio.apply()
-            png_data = graph.get_graph().draw_mermaid_png(
-                draw_method=MermaidDrawMethod.PYPPETEER,
-                curve_style=CurveStyle.LINEAR,
-                node_colors=NodeColors(start="#ffdfba", end="#baffc9", other="#fad7de"),
-                padding=10
-            )
-        elif method == "graphviz":
+        if method == "graphviz":
             # Use Graphviz (requires: pip install graphviz)
             png_data = graph.get_graph().draw_png()
         else:
@@ -392,26 +536,6 @@ def visualize_graph_png(graph, filename: str = "langgraph_diagram.png", method: 
         elif method == "graphviz":
             print("   pip install graphviz")
         return None
-
-
-def display_graph_jupyter(graph):
-    """Display graph in Jupyter notebook (requires IPython)"""
-    try:
-        from IPython.display import Image, display
-        
-        # Try to display as PNG
-        try:
-            from langchain_core.runnables.graph import MermaidDrawMethod
-            png_data = graph.get_graph().draw_mermaid_png(
-                draw_method=MermaidDrawMethod.API
-            )
-            display(Image(data=png_data))
-        except Exception:
-            print("PNG display failed, falling back to ASCII")
-            print(graph.get_graph().draw_ascii())
-    
-    except ImportError:
-        print("IPython not available. Use visualize_graph_ascii() instead")
 
 
 def visualize_graph_full(graph, output_dir: str = "."):
@@ -636,8 +760,6 @@ def run_example(example: Dict[str, Any], problem: str):
         return None
 
 
-
-
 def main():
     """Run all examples with visualizations"""
     
@@ -665,19 +787,18 @@ def main():
     print("\n✓ All visualizations saved to: ./visualizations/")
 
 
-
 if __name__ == "__main__":
-    main()
-
-# For nodes:
-# if __name__ == "__main__":
-#     from evaluation.multiagent_graph_llm2 import run_example
-#     random.seed(49)
-#     for i in range(20):
-#         print(f"\n=== Random Graph {i+1} ===")
-#         g = generate_random_graph(max_depth=1)
-#         if len(g.get_nodes()) <= 10:
-#             print(g.get_nodes(), g.get_edges())
-#             results = run_example({"name": f"Example{i}", "nodes": g.get_nodes(), "edges": g.get_edges()}, "What is machine the largest commond divisor of 10293 and 29384?")
-#             print(f"Results: {results}")
-#             g.visualize()
+    from graph_generation.graph_generation import _random_graph
+    import random
+    random.seed(49)
+    number_of_nodes = []
+    for i in range(100):
+        print(f"\n=== Random Graph {i+1} ===")
+        print(number_of_nodes)
+        g = _random_graph(max_depth=3)
+        if number_of_nodes.count(len(g.get_nodes())) <= 5 and len(g.get_nodes()) < 10 and len(number_of_nodes) < 30:
+            print(g.get_nodes(), g.get_edges())
+            results = run_example({"name": f"Example{i}", "nodes": g.get_nodes(), "edges": g.get_edges()}, "What is machine the largest commond divisor of 108984222 and 29245674?")
+            print(f"Results: {results}")
+            #g.visualize()
+            number_of_nodes.append(len(g.get_nodes()))
