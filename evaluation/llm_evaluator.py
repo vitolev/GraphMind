@@ -36,7 +36,7 @@ def evaluate_selected_graphs(
             score = structure_score + random_component
             
             node_types = [node_type for _, node_type in graph.nodes]
-            if 'type_a' in node_types:
+            if 'Solver' in node_types:
                 score += 0.2
             
             score = min(1.0, max(0.0, score))
