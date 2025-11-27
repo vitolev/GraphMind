@@ -168,7 +168,7 @@ def generate_response(message: str, node_type: str = "Default", model: str = "ll
     import time
 
     max_retries = 5
-    retry_delay = 5  # default retry delay in seconds
+    retry_delay = 5
 
     for attempt in range(max_retries):
         try:
@@ -187,7 +187,7 @@ def generate_response(message: str, node_type: str = "Default", model: str = "ll
             chat_completion = client.chat.completions.create(
                 messages=messages,
                 model=model,
-                max_completion_tokens=256,
+                max_completion_tokens=128,
             )
             
             response = chat_completion.choices[0].message.content
@@ -198,19 +198,17 @@ def generate_response(message: str, node_type: str = "Default", model: str = "ll
             
             return response
         except Exception as e:
-            if 'limit' in str(e).lower():
-                retry_after = getattr(e, 'retry_after', None)
-                wait = retry_after if retry_after is not None else retry_delay
-                print(f"Rate limited, retrying after {wait}s")
-                time.sleep(wait)
+            print(f"   ❌ Groq LLM call failed on attempt {attempt + 1}/{max_retries}: {e}")
+            if attempt < max_retries - 1:
+                print(f"      Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
             else:
-                raise RuntimeError("Max retries reached due to rate limiting")
-
+                print("      Max retries reached. Raising exception.")
+                raise
 
 # ============================================================================
 # STATE DEFINITIONS - WITH REDUCERS
 # ============================================================================
-
 
 @dataclass
 class GlobalKnowledge:
@@ -221,8 +219,6 @@ class GlobalKnowledge:
     
     def get(self, node_id: int) -> Optional[Any]:
         return self.entries.get(node_id)
-
-
 
 class AgentState(TypedDict):
     problem: Annotated[list, operator.add]
@@ -240,7 +236,7 @@ def solver_node(state: AgentState) -> dict:
     print(f"\n🔧 Solver-{node_id}: Using Groq LLM")
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
     prompt = f"Solve this problem: {problem_text}"
-    response = generate_response(prompt, node_type="Solver")
+    response = generate_response(prompt, model="moonshotai/kimi-k2-instruct-0905" ,node_type="Solver")
     state['global_knowledge'].add(node_id, response)
     print(f"   Response: {response}...")
     return {"result": [response]}
@@ -251,7 +247,7 @@ def extract_topic_node(state: AgentState) -> dict:
     print(f"\n📖 Extract_topic-{node_id}: Using Groq LLM")
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
     prompt = f"Extract the main topic from: {problem_text}"
-    response = generate_response(prompt)
+    response = generate_response(prompt, model="meta-llama/llama-4-maverick-17b-128e-instruct")
     state['global_knowledge'].add(node_id, response)
     print(f"   Response: {response[:100]}...")
     return {"result": [response]}
@@ -278,7 +274,7 @@ def combine_all_node(state: AgentState, combine_all_edges: dict) -> dict:
     
     combined_text = " ".join(combined_data)
     prompt = f"Combine and summarize: {combined_text}"
-    response = generate_response(prompt)
+    response = generate_response(prompt, model="openai/gpt-oss-120b")
     state['global_knowledge'].add(node_id, response)
     print(f"   Combined: {response[:500]}...")
     return {"result": [response]}
