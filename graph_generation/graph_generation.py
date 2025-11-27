@@ -169,8 +169,10 @@ def _build_random_graph(max_depth=2, max_nodes=20):
 
             if remaining_nodes <= 2:
                 child_type = _pick_end_or_solvers("Combine_any")
-                child = Node(child_type)
-                combine_any_node.add_child(child)
+                if child_type != "END":
+                    # Only add child if not END, as END will be added at the end
+                    child = Node(child_type)
+                    combine_any_node.add_child(child)
             else:
                 # Continue building from Combine_any
                 _rec(combine_any_node, depth, max_depth, remaining_nodes // 2)
@@ -247,10 +249,5 @@ def _random_graph(max_depth=2, max_nodes=20) -> Graph:
     return graph_obj
 
 if __name__ == "__main__":
-    start_time = time.time()
-    g = _random_graph(max_depth=3, max_nodes=20)
-    hetData = g.to_pyg(Config(data_format="HeteroData"))
-    end_time = time.time()
-
-    print(hetData)
+    g = _random_graph(max_depth=2, max_nodes=15)
     g.visualize()

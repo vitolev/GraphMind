@@ -142,7 +142,25 @@ class Graph:
             for key, edge_list in edges_by_type.items():
                 hetero_data[key].edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
 
+            # ---- Add final_node_mask per node type ----
+            hetero_data["final_node_mask"] = {}
+
+            # Find global index of END node
+            end_node_global = next(
+                (i for i, (_, t) in enumerate(self.nodes) if t == "END"),
+                len(self.nodes) - 1
+            )
+            end_node_type, end_local_idx = node_id_to_local[self.nodes[end_node_global][0]]
+
+            for node_type, node_ids in nodes_by_type.items():
+                mask = torch.zeros(len(node_ids), dtype=torch.bool)
+                if node_type == end_node_type:
+                    mask[end_local_idx] = True
+                hetero_data["final_node_mask"][node_type] = mask
+
+            # Target
             hetero_data.y = torch.tensor([self.llm_score], dtype=torch.float)
+            
             return hetero_data
         
         #-- Invalid type specified ---
