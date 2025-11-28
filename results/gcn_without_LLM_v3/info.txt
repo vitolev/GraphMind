@@ -1,0 +1,4 @@
+Experiment according to config present here. 
+There was a small initial training set of 10 samples, obtained by prerunning experiment for one iteration (the same config). 
+The size of good graph set was again 1000, meaning that some graphs from older iterations were stored, but now the first iteration does not produce random predictions,
+so there is no problem like in v1.

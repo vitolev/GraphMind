@@ -1,0 +1,2 @@
+Experiment according to config present here. There were no initial training/good graphs set.
+The setup is the same as in v1 experiment, just with different hidden dim.

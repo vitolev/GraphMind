@@ -1,0 +1,3 @@
+Experiment according to config file. 
+There were no initial training/good graphs set. 
+The good graph set is capped to the number of evaluated graphs, meaning that from iteration to iteration the good graph set is empty, so the problem from v1 does not happen.
