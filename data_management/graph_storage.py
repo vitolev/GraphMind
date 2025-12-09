@@ -91,21 +91,56 @@ class Graph:
             type_to_idx = {t: i for i, t in enumerate(agent_types)}
             edge_index = torch.tensor(self.edges, dtype=torch.long).t().contiguous()
 
-            x = torch.zeros((len(self.nodes), num_types), dtype=torch.float)
+            # Node features
+            num_nodes = len(self.nodes)
+            x = torch.zeros((num_nodes, num_types), dtype=torch.float)
+
             for i, (_, node_type) in enumerate(self.nodes):
                 if node_type not in type_to_idx:
                     raise ValueError(f"Unknown node type '{node_type}' not in config.agent_types")
                 x[i, type_to_idx[node_type]] = 1.0
 
-            data = Data(x=x, edge_index=edge_index, y=torch.tensor([self.llm_score]))
-            
-            final_node_mask = torch.zeros(len(self.nodes), dtype=torch.bool)
-            final_node_idx = next(
-                (i for i, (_, t) in enumerate(self.nodes) if t == "END"),
-                len(self.nodes) - 1
+            # ------------------------------
+            # Add super node (virtual node)
+            # ------------------------------
+
+            # Super-node feature vector: zeros (same dimension)
+            super_node_feat = torch.zeros((1, num_types), dtype=torch.float)
+
+            # Append super node to x
+            x = torch.cat([x, super_node_feat], dim=0)
+
+            # Index of the super node (last node)
+            super_idx = num_nodes
+
+            # Edges from super node to all nodes
+            row_to = torch.full((num_nodes,), super_idx, dtype=torch.long)
+            col_to = torch.arange(num_nodes, dtype=torch.long)
+
+            # Edges from all nodes to super node
+            row_from = torch.arange(num_nodes, dtype=torch.long)
+            col_from = torch.full((num_nodes,), super_idx, dtype=torch.long)
+
+            # Stack new edges (bidirectional)
+            new_edges = torch.stack(
+                [
+                    torch.cat([row_to, row_from]),
+                    torch.cat([col_to, col_from])
+                ],
+                dim=0
             )
-            final_node_mask[final_node_idx] = True
-            data.final_node_mask = final_node_mask
+
+            # Append edges
+            edge_index = torch.cat([edge_index, new_edges], dim=1)
+
+            # Final Data object
+            data = Data(
+                x=x,
+                edge_index=edge_index,
+                y=torch.tensor([self.llm_score], dtype=torch.float)
+            )
+
+            data.super_node_idx = torch.tensor([super_idx], dtype=torch.long)
 
             return data
 
@@ -142,21 +177,24 @@ class Graph:
             for key, edge_list in edges_by_type.items():
                 hetero_data[key].edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
 
-            # ---- Add final_node_mask per node type ----
-            hetero_data["final_node_mask"] = {}
+            # ---- Super node ----
+            super_type = "super"
+            hetero_data[super_type].x = torch.zeros((1, 1), dtype=torch.float)
 
-            # Find global index of END node
-            end_node_global = next(
-                (i for i, (_, t) in enumerate(self.nodes) if t == "END"),
-                len(self.nodes) - 1
-            )
-            end_node_type, end_local_idx = node_id_to_local[self.nodes[end_node_global][0]]
+            # Index of the super node (per graph)
+            hetero_data.super_node_idx = torch.tensor([0], dtype=torch.long)
 
+            # ---- Connect super node to all node types (bidirectional) ----
             for node_type, node_ids in nodes_by_type.items():
-                mask = torch.zeros(len(node_ids), dtype=torch.bool)
-                if node_type == end_node_type:
-                    mask[end_local_idx] = True
-                hetero_data["final_node_mask"][node_type] = mask
+                n = len(node_ids)
+                if n == 0:
+                    continue
+
+                # node_type to super (only in one direction)
+                hetero_data[(node_type, "to", super_type)].edge_index = torch.stack([
+                    torch.arange(n, dtype=torch.long),
+                    torch.zeros(n, dtype=torch.long)
+                ], dim=0)
 
             # Target
             hetero_data.y = torch.tensor([self.llm_score], dtype=torch.float)

@@ -53,13 +53,13 @@ class GATNet(torch.nn.Module):
         for gat in self.gat_layers:
             x = F.elu(gat(x, edge_index))
 
-        # final node embeddings for each graph in batch
-        final_node_mask = data.final_node_mask.to(self.device)   # shape [num_nodes]
-        final_nodes = x[final_node_mask]                         # shape [batch_size, hidden_dim]
+        # Graph-level representation via super node
+        super_indices = data.super_node_idx.to(self.device)
+        super_embeddings = x[super_indices]  
 
-        # predict scalar for each graph
-        score = self.mlp(final_nodes)    # shape [batch_size, 1]
-        return score
+        # Final prediction
+        score = self.mlp(super_embeddings)
+        return score.squeeze() 
 
     @torch.no_grad()
     def predict(self, data_list: List[Data]) -> List[float]:

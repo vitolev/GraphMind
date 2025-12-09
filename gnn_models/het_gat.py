@@ -39,6 +39,18 @@ class HetGATNet(torch.nn.Module):
                         dropout=self.dropout,
                         add_self_loops=False
                     )
+            
+            # Add additional edges to 'super' node
+            for ntype in NODE_TYPES:    
+                conv_dict[(ntype, "to", "super")] = GATConv(
+                    in_channels=in_dim,
+                    out_channels=self.hidden_dim,
+                    heads=self.heads,
+                    concat=True,
+                    dropout=self.dropout,
+                    add_self_loops=False
+                )
+
             self.gat_layers.append(HeteroConv(conv_dict, aggr='mean'))
 
         # Final MLP to scalar per graph
@@ -59,6 +71,9 @@ class HetGATNet(torch.nn.Module):
         for ntype in NODE_TYPES:
             x = data[ntype].x
             x_dict[ntype] = x if x.numel() > 0 else None
+
+        # Manually add 'super' node
+        x_dict['super'] = data['super'].x
 
         # ============================================================
         # 2) Pass through hetero GAT layers
@@ -92,12 +107,12 @@ class HetGATNet(torch.nn.Module):
                 x_dict['START'] = torch.ones((x_dict['START'].shape[0], H), device=self.device)     # Manually convert START node embedding to correct size
 
         # ============================================================
-        # 3) Final node embedding extraction
+        # 3) Use super node as graph-level embedding
         # ============================================================
-        end_mask = data['final_node_mask']['END'].to(self.device)
-        end_emb = x_dict['END'][end_mask]  # shape: [1, hidden_dim]
+        super_idx = data.super_node_idx.to(self.device)
+        super_emb = x_dict["super"][super_idx]          
 
-        return self.mlp(end_emb)
+        return self.mlp(super_emb)
 
     @torch.no_grad()
     def predict(self, data_list: List[HeteroData]) -> List[float]:

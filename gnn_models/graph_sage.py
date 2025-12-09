@@ -56,13 +56,13 @@ class SAGENet(torch.nn.Module):
             x = F.relu(sage(x, edge_index))
             x = self.dropout(x)
 
-        # Pick final-node embedding
-        final_node_mask = data.final_node_mask.to(self.device)
-        final_nodes = x[final_node_mask]  # [batch_size, hidden_dim]
+        # Graph-level representation via super node
+        super_indices = data.super_node_idx.to(self.device)
+        super_embeddings = x[super_indices]  
 
-        # Predict score
-        score = self.mlp(final_nodes)
-        return score
+        # Final prediction
+        score = self.mlp(super_embeddings)
+        return score.squeeze() 
 
     @torch.no_grad()
     def predict(self, data_list: List[Data]) -> List[float]:
