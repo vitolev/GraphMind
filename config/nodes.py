@@ -118,6 +118,15 @@ EDGES = [
     ("Python_solver","Combine_any")
 ]
 
+FIXED_COST = {
+    "Decompose_2": 4,   # 1 Decompose_2, 1 Combine_all, 2 branches
+    "Decompose_3": 5,   # 1 Decompose_3, 1 Combine_all, 3 branches
+    "Decompose_4": 6,   # 1 Decompose_4, 1 Combine_all, 4 branches
+    "Split":       4,   # 1 Split, 1 Combine_all, 2 branches
+    "Validator":   4,   # 1 Validator, 1 Combine_any, 1 True_pass, 1 False_pass
+    "END":         0    # END node has no cost
+}
+
 # ======================
 #  Node class
 # ======================

@@ -10,7 +10,7 @@ import random
 from typing import Dict, Any, Tuple, Optional
 from config.settings import Config
 from data_management.graph_storage import Graph, GraphSet
-from config.nodes import Node, NODE_TYPES, RULES, DEPTH_INCREASE_NODES
+from config.nodes import Node, NODE_TYPES, RULES, DEPTH_INCREASE_NODES, FIXED_COST
 import networkx as nx
 import time
 
@@ -82,13 +82,29 @@ def _random_strategy(
 def _build_random_graph(max_depth=2, max_nodes=20):
     start = Node("START")
 
-    def _pick_random_child(node_type):
+    def _pick_random_child(node_type, remaining_nodes):
         allowed = RULES[node_type]["allowed_children"]
-        return random.choice(allowed)
+        a = []
+        for child in allowed:
+            cost = FIXED_COST.get(child, 1)
+            if cost <= remaining_nodes:
+                a.append( (child, cost) )
+        if not a:
+            # No child can be picked as there is no remaining nodes. Pick "END"
+            return ("END", 0)
+        return random.choice(a)
     
-    def _pick_no_depth_increase_child(node_type):
+    def _pick_no_depth_increase_child(node_type, remaining_nodes):
         allowed = [child for child in RULES[node_type]["allowed_children"] if child not in DEPTH_INCREASE_NODES]
-        return random.choice(allowed)
+        a = []
+        for child in allowed:
+            cost = FIXED_COST.get(child, 1)
+            if cost <= remaining_nodes:
+                a.append( (child, cost) )
+        if not a:
+            # No child can be picked as there is no remaining nodes. Pick "END"
+            return ("END", 0)
+        return random.choice(a)
 
     def _rec(node, depth, max_depth, remaining_nodes):
         node_type = node.type_name
@@ -99,21 +115,17 @@ def _build_random_graph(max_depth=2, max_nodes=20):
         if node_type in ["Decompose_2", "Decompose_3", "Decompose_4", "Split"]:
             depth += 1
             children_to_combine = []
+            remaining_nodes_per_branch = remaining_nodes // (num_branches + 1) + 1   # Evenly distribute remaining nodes across branches and Combine_all, +1 for the node in branches we already accounted for.
+                
             for _ in range(num_branches):
-                if remaining_nodes <= num_branches + 1:     # +1 for comining later on
-                    child_type = _pick_no_depth_increase_child(node_type) # Pick random child that does not increase depth and stop with recursive build of the branch
-                    child = Node(child_type)
-                    node.add_child(child)
-                    children_to_combine.append(child)
+                if depth == max_depth:
+                    # Allow only nodes that dont lead to further depth increase
+                    child_type, required_nodes = _pick_no_depth_increase_child(node_type, remaining_nodes_per_branch)
                 else:
-                    if depth == max_depth:
-                        # Allow only nodes that dont lead to further depth increase
-                        child_type = _pick_no_depth_increase_child(node_type)
-                    else:
-                        child_type = _pick_random_child(node_type)   # these node_types for sure do not have "END" as allowed child, so no need for explicit check
-                    child = _rec(Node(child_type), depth, max_depth, remaining_nodes // (num_branches + 1) - 1)
-                    node.add_child(child)
-                    children_to_combine.append(child)
+                    child_type, required_nodes = _pick_random_child(node_type, remaining_nodes_per_branch)   # these node_types for sure do not have "END" as allowed child, so no need for explicit check
+                child = _rec(Node(child_type), depth, max_depth, remaining_nodes_per_branch - required_nodes)
+                node.add_child(child)
+                children_to_combine.append(child)
                 
             # After branches are generated, attach Combine_all to merge them
             depth -= 1
@@ -125,13 +137,9 @@ def _build_random_graph(max_depth=2, max_nodes=20):
                     last_node = last_node.children[0]
                 last_node.add_child(combine_all_node)
 
-            if remaining_nodes <= num_branches + 1:
-                child_type = _pick_no_depth_increase_child("Combine_all")   # Pick random child that does not increase depth and stop with recursive build
-                child = Node(child_type)
-                combine_all_node.add_child(child)
-            else:
-                # Continue building from Combine_all
-                _rec(combine_all_node, depth, max_depth, remaining_nodes // (num_branches + 1) - 1)
+            remaining_nodes_after_combine = remaining_nodes // (num_branches + 1)
+
+            _rec(combine_all_node, depth, max_depth, remaining_nodes_after_combine)
 
             # Return the current node
             return node
@@ -140,12 +148,7 @@ def _build_random_graph(max_depth=2, max_nodes=20):
         if node_type == "Validator":
             # Two branches: True_pass and False_pass
             true_node = Node("True_pass")   # True branch just passes through
-            if remaining_nodes <= 2:    # 1 for false and 1 for combine_any
-                false_child_type = _pick_no_depth_increase_child("False_pass") # Pick random child that does not increase depth and stop with recursive build of the branch
-                false_node = Node("False_pass")
-                false_node.add_child(Node(false_child_type))
-            else:
-                false_node = _rec(Node("False_pass"), depth + 1, max_depth, remaining_nodes // 2 - 1) # False branch continues with recursive build
+            false_node = _rec(Node("False_pass"), depth + 1, max_depth, remaining_nodes // 2) # False branch continues with recursive build
             node.add_child(true_node)
             node.add_child(false_node)
 
@@ -159,37 +162,19 @@ def _build_random_graph(max_depth=2, max_nodes=20):
                 last_false = last_false.children[0]
             last_false.add_child(combine_any_node)
 
-            if remaining_nodes <= 2:
-                child_type = _pick_no_depth_increase_child("Combine_any")
-                if child_type != "END":
-                    # Only add child if not END, as END will be added at the end
-                    child = Node(child_type)
-                    combine_any_node.add_child(child)
-            else:
-                # Continue building from Combine_any
-                _rec(combine_any_node, depth, max_depth, remaining_nodes // 2 - 1)
+            _rec(combine_any_node, depth, max_depth, remaining_nodes // 2)
 
             # Return the current validator node
             return node
-
-        # For other nodes: False_pass, Solver, Python_solver, Explain, Extract_topic, Combine_all, Combine_any
-        if remaining_nodes <= 1:
-            child_type = _pick_no_depth_increase_child(node_type)
-            if child_type != "END":
-                child = Node(child_type)
-                node.add_child(child)
-                return node
-            else:
-                # If END is picked, dont add it here, will be added at the end. Just return current node
-                return node
         
+        # else, for single branch nodes (e.g. Solver, Python_solver, Explain, Extract_topic, etc.)
         if depth == max_depth:
-            child_type = _pick_no_depth_increase_child(node_type)
+            child_type, required_nodes = _pick_no_depth_increase_child(node_type, remaining_nodes)
         else:
-            child_type = _pick_random_child(node_type)
+            child_type, required_nodes = _pick_random_child(node_type, remaining_nodes)
 
         if child_type != "END":
-            child = _rec(Node(child_type), depth, max_depth, remaining_nodes - 1)
+            child = _rec(Node(child_type), depth, max_depth, remaining_nodes - required_nodes)
             node.add_child(child)
         return node
 
@@ -240,11 +225,7 @@ def _random_graph(max_depth=2, max_nodes=20) -> Graph:
     return graph_obj
 
 if __name__ == "__main__":
-    while True:
-        g = _random_graph(max_depth=1, max_nodes=8)
-        nodes = g.get_nodes()
-        # Check if graph has no Solver or Python_solver nodes
-        node_types = [node_type for _, node_type in nodes]
-        if 'Solver' not in node_types and 'Python_solver' not in node_types:
-            g.visualize()
-            break
+    generated_graphs = GraphSet()
+    for i in range(10):
+        g = _random_graph(max_depth=2, max_nodes=8)
+        g.visualize()
