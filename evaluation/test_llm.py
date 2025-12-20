@@ -1,16 +1,106 @@
 import operator
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, TypedDict, Annotated
 from groq import Groq
 from langgraph.graph import StateGraph, START, END
 import time
 
+# Try to load .env file if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, use environment variables directly
 
 # ============================================================================
 # LLM SETUP - GROQ FREE VERSION
 # ============================================================================
 
+# Groq client will automatically use GROQ_API_KEY environment variable
 client = Groq()
+
+# ============================================================================
+# MODEL POOLS FOR RATE LIMIT DISTRIBUTION
+# ============================================================================
+
+# Track models that are currently rate-limited (to avoid using them)
+_rate_limited_models = set()
+
+def mark_model_rate_limited(model: str):
+    """Mark a model as rate-limited so we can avoid it temporarily"""
+    _rate_limited_models.add(model)
+
+def is_model_rate_limited(model: str) -> bool:
+    """Check if a model is currently marked as rate-limited"""
+    return model in _rate_limited_models
+
+# Solver models - good for problem-solving tasks (prioritize high RPD)
+SOLVER_MODELS = [
+    #"llama-3.1-8b-instant",                    # Commented: no daily limit available
+    "meta-llama/llama-guard-4-12b",            # 30 RPM, 14.4K RPD, 15K TPM (high daily limit)
+    "meta-llama/llama-prompt-guard-2-22m",     # 30 RPM, 14.4K RPD, 15K TPM (high daily limit)
+    "allam-2-7b",                              # 30 RPM, 7K RPD, 6K TPM (decent daily limit)
+]
+
+# Extract topic models - good for analysis/understanding tasks (needs 800 tokens, so models must support >= 800)
+EXTRACT_TOPIC_MODELS = [
+    #"llama-3.1-8b-instant",                    # Commented: no daily limit available
+    "meta-llama/llama-guard-4-12b",            # 30 RPM, 14.4K RPD, 15K TPM (high daily limit, supports 800 tokens)
+    # Note: llama-prompt-guard-2-86m has 512 token limit, removed since extract_topic needs 800
+]
+
+# Validator models - good for validation/critical analysis
+VALIDATOR_MODELS = [
+    #"llama-3.1-8b-instant",                    # Commented: no daily limit available
+    "meta-llama/llama-guard-4-12b",            # 30 RPM, 14.4K RPD, 15K TPM (guard model, perfect for validation)
+    "meta-llama/llama-prompt-guard-2-86m",     # 30 RPM, 14.4K RPD, 15K TPM (high daily limit)
+]
+
+# Combine all models - good for synthesis tasks
+COMBINE_ALL_MODELS = [
+    #"llama-3.1-8b-instant",                    # Commented: no daily limit available
+    "meta-llama/llama-guard-4-12b",            # 30 RPM, 14.4K RPD, 15K TPM (high daily limit)
+    "meta-llama/llama-prompt-guard-2-86m",     # 30 RPM, 14.4K RPD, 15K TPM (high daily limit)
+]
+
+def select_model_deterministic(problem_text: str, model_pool: List[str]) -> str:
+    """
+    Deterministically select a model from pool based on problem text.
+    Uses first character of problem to ensure consistent selection.
+    Avoids models that are currently rate-limited.
+    
+    Args:
+        problem_text: The problem text to base selection on
+        model_pool: List of model names to choose from
+    
+    Returns:
+        Selected model name
+    """
+    if not problem_text:
+        # Return first non-rate-limited model, or first model if all are rate-limited
+        for model in model_pool:
+            if not is_model_rate_limited(model):
+                return model
+        return model_pool[0]
+    
+    # Filter out rate-limited models
+    available_models = [m for m in model_pool if not is_model_rate_limited(m)]
+    if not available_models:
+        # If all models are rate-limited, use the original pool
+        available_models = model_pool
+    
+    # Use first character (or first non-space char) to determine model
+    first_char = problem_text.strip()[0].lower() if problem_text.strip() else 'a'
+    
+    # Convert character to index (0-25 for a-z, wraps around)
+    char_index = ord(first_char) - ord('a')
+    if char_index < 0 or char_index > 25:
+        char_index = 0  # Default for non-letter characters
+    
+    # Select model based on character index from available (non-rate-limited) models
+    model_index = char_index % len(available_models)
+    return available_models[model_index]
 
 
 def call_groq_with_retry(messages: List[Dict], model: str = "llama-3.1-8b-instant", max_tokens: int = 128, max_retries: int = 5) -> str:
@@ -28,8 +118,11 @@ def call_groq_with_retry(messages: List[Dict], model: str = "llama-3.1-8b-instan
         except Exception as e:
             error_msg = str(e).lower()
             if 'rate limit' in error_msg or '429' in error_msg:
+                # Mark this model as rate-limited
+                mark_model_rate_limited(model)
                 wait_time = retry_delay * (2 ** attempt)
-                print(f"      ⏳ Rate limited. Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                print(f"      ⏳ Rate limited on {model}. Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                print(f"      ⚠️  Model {model} marked as rate-limited, will avoid it for future requests")
                 time.sleep(wait_time)
             elif 'invalid_request_error' in error_msg or '400' in error_msg:
                 if len(messages) > 1:
@@ -87,9 +180,11 @@ class AgentState(TypedDict):
 def solver_node(state: AgentState) -> dict:
     """Solver node - generates concise solution (max 100 chars) and parses result"""
     node_id = state.get("node_id")
-    print(f"\n🔧 Solver-{node_id}: Quick solution (max 100 chars)")
-    
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
+    
+    # Select model deterministically based on problem
+    selected_model = select_model_deterministic(problem_text, SOLVER_MODELS)
+    print(f"\n🔧 Solver-{node_id}: Quick solution (model: {selected_model})")
     
     # SOLVER SPECIFIC PROMPT
     system_prompt = """You are an expert problem solver. Your task is to:
@@ -114,7 +209,7 @@ def solver_node(state: AgentState) -> dict:
     ]
     
     try:
-        response = call_groq_with_retry(messages, model="llama-3.1-8b-instant", max_tokens=150)
+        response = call_groq_with_retry(messages, model=selected_model, max_tokens=150)
         final_response = assistant_start + response
         state['global_knowledge'].add(node_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")
@@ -143,9 +238,11 @@ def solver_node(state: AgentState) -> dict:
 def extract_topic_node(state: AgentState) -> dict:
     """Extract topic node - creates tree structure for hiring"""
     node_id = state.get("node_id")
-    print(f"\n📖 Extract_topic-{node_id}: Building topic tree (hiring guide)")
-    
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
+    
+    # Select model deterministically based on problem
+    selected_model = select_model_deterministic(problem_text, EXTRACT_TOPIC_MODELS)
+    print(f"\n📖 Extract_topic-{node_id}: Building topic tree (model: {selected_model})")
     
     # EXTRACT_TOPIC SPECIFIC PROMPT
     system_prompt = """You are an expert at identifying key information and creating hierarchical structures.
@@ -180,11 +277,15 @@ def extract_topic_node(state: AgentState) -> dict:
         {"role": "assistant", "content": assistant_start}
     ]
     
+    import time
     try:
-        response = call_groq_with_retry(messages, model="llama-3.1-8b-instant", max_tokens=800)
+        start_time = time.time()
+        response = call_groq_with_retry(messages, model=selected_model, max_tokens=800)
+        elapsed_time = time.time() - start_time
         final_response = assistant_start + response
         state['global_knowledge'].add(node_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")
+        print(f"   ⏱️ Time taken: {elapsed_time:.2f} seconds")
         return {"result": [final_response]}
     except Exception as e:
         print(f"   ❌ Error: {e}")
@@ -195,7 +296,6 @@ def extract_topic_node(state: AgentState) -> dict:
 def validator_node(state: AgentState) -> dict:
     """Validator node - critical analysis, looks for counter-examples"""
     node_id = state.get("node_id")
-    print(f"\n✓ Validator-{node_id}: Critical validation (finding counter-examples)")
     
     # Get the most recent result from global knowledge to validate
     # Try to find results from previous nodes
@@ -208,6 +308,11 @@ def validator_node(state: AgentState) -> dict:
     
     if not most_recent_result:
         most_recent_result = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
+    
+    # Select model deterministically based on original problem text
+    problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
+    selected_model = select_model_deterministic(problem_text, VALIDATOR_MODELS)
+    print(f"\n✓ Validator-{node_id}: Critical validation (model: {selected_model})")
     
     # VALIDATOR SPECIFIC PROMPT
     system_prompt = """You are a critical quality assurance expert. Your task is to:
@@ -243,7 +348,7 @@ def validator_node(state: AgentState) -> dict:
     ]
     
     try:
-        response = call_groq_with_retry(messages, model="llama-3.1-8b-instant", max_tokens=400)
+        response = call_groq_with_retry(messages, model=selected_model, max_tokens=400)
         final_response = assistant_start + response
         state['global_knowledge'].add(node_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")
@@ -257,7 +362,11 @@ def validator_node(state: AgentState) -> dict:
 def combine_all_node(state: AgentState, combine_all_edges: dict) -> dict:
     """Combine all node - synthesizes results from solver and validator"""
     node_id = state.get("node_id")
-    print(f"\n🔗 Combine_all-{node_id}: Synthesizing all results")
+    
+    # Get original problem text for deterministic model selection
+    problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
+    selected_model = select_model_deterministic(problem_text, COMBINE_ALL_MODELS)
+    print(f"\n🔗 Combine_all-{node_id}: Synthesizing all results (model: {selected_model})")
     
     incoming = combine_all_edges.get(node_id, [])
     
@@ -301,7 +410,7 @@ def combine_all_node(state: AgentState, combine_all_edges: dict) -> dict:
     ]
     
     try:
-        response = call_groq_with_retry(messages, model="llama-3.1-8b-instant", max_tokens=500)
+        response = call_groq_with_retry(messages, model=selected_model, max_tokens=500)
         final_response = assistant_start + response
         state['global_knowledge'].add(node_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")

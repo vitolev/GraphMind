@@ -80,10 +80,14 @@ def predict_batch_performance(
         }
     }
     
+    # Format optional metrics safely
+    best_str = f"{metrics['best_predicted']:.4f}" if metrics['best_predicted'] is not None else "N/A"
+    mean_str = f"{metrics['mean_predicted']:.4f}" if metrics['mean_predicted'] is not None else "N/A"
+    
     logger.debug(
         f"GNN prediction complete - "
-        f"Best: {metrics['best_predicted']:.4f}, "
-        f"Mean: {metrics['mean_predicted']:.4f}, "
+        f"Best: {best_str}, "
+        f"Mean: {mean_str}, "
         f"Time: {inference_time:.4f}s"
     )
     

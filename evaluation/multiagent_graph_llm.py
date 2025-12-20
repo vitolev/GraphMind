@@ -1,8 +1,16 @@
 import operator
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, TypedDict, Annotated, Literal
 from groq import Groq
 from langgraph.graph import StateGraph, START, END
+
+# Try to load .env file if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, use environment variables directly
 
 # ============================================================================
 # SYSTEM PROMPTS FOR EACH NODE TYPE
@@ -17,9 +25,9 @@ MESSAGE_TEMPLATES = {
         
         "user": """Problem: {problem}
 
-        Your answer should be in the following format, the answers with more than 100 characters will be evaluated as incorrect:
+        Your answer should be in the following format:
         <SOLUTION>
-        [Your detailed solution here]
+        [Your solution here - provide the final answer clearly]
         </SOLUTION>""",
         "assistant_start": "The final solution to this problem is: <SOLUTION> "
     },
@@ -153,6 +161,25 @@ Be helpful and accurate.""",
 
 client = Groq()
 
+# Model rotation for solver nodes to avoid rate limits
+# These models have similar capabilities for problem-solving tasks
+SOLVER_MODELS = [
+    "llama-3.1-8b-instant",                    # 30 RPM, 14.4K RPD, 6K TPM
+    "moonshotai/kimi-k2-instruct-0905",        # 60 RPM, 1K RPD, 10K TPM
+    "qwen/qwen3-32b",                          # 60 RPM, 1K RPD, 6K TPM
+    "llama-3.3-70b-versatile",                 # 30 RPM, 1K RPD, 12K TPM
+]
+
+# Counter for round-robin model selection
+_solver_model_counter = 0
+
+def get_next_solver_model() -> str:
+    """Get next model in round-robin fashion to distribute load across models"""
+    global _solver_model_counter
+    model = SOLVER_MODELS[_solver_model_counter % len(SOLVER_MODELS)]
+    _solver_model_counter += 1
+    return model
+
 def generate_response(message: str, node_type: str = "Default", model: str = "llama-3.1-8b-instant", use_assistant_start = True) -> str:
 
     template = MESSAGE_TEMPLATES.get(node_type, MESSAGE_TEMPLATES["Default"])
@@ -233,10 +260,12 @@ class AgentState(TypedDict):
 
 def solver_node(state: AgentState) -> dict:
     node_id = state.get("node_id")
-    print(f"\n🔧 Solver-{node_id}: Using Groq LLM")
+    # Rotate through models to avoid hitting rate limits
+    model = get_next_solver_model()
+    print(f"\n🔧 Solver-{node_id}: Using Groq LLM (model: {model})")
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
     prompt = f"Solve this problem: {problem_text}"
-    response = generate_response(prompt, model="moonshotai/kimi-k2-instruct-0905" ,node_type="Solver")
+    response = generate_response(prompt, model=model, node_type="Solver")
     state['global_knowledge'].add(node_id, response)
     print(f"   Response: {response}...")
     return {"result": [response]}

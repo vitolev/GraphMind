@@ -70,36 +70,11 @@ def evaluate_selected_graphs(
     
     scores = []
     gnn_scores = []
+    per_graph_metrics = []  # Store detailed metrics for each graph
     
-    # for graph in selected_graphs.get_all():
-    #     try:
-    #         num_nodes = len(graph.get_nodes())
-    #         num_edges = len(graph.get_edges())
-            
-    #         if num_nodes > 0:
-    #             structure_score = num_edges / (num_nodes ** 2)
-    #         else:
-    #             structure_score = 0.0
-            
-    #         random_component = np.random.uniform(0.1, 0.15)
-    #         score = structure_score + random_component
-            
-    #         node_types = [node_type for _, node_type in graph.nodes]
-    #         if 'Solver' in node_types:
-    #             score += 0.2
-            
-    #         score = min(1.0, max(0.0, score))
-            
-    #         graph.set_llm_score(score, time=0.1)
-    #         scores.append(score)
-
-    #         gnn_scores.append(graph.get_gnn_score())
-            
-    #     except Exception as e:
-    #         logger.warning(f"Error evaluating graph: {e}")
-    #         graph.set_llm_score(0.0, time=0.1)
-    #         scores.append(0.0)
-    #         continue
+    # Determine how many problems to evaluate per graph
+    num_problems_to_eval = min(config.num_eval_problems, len(math_problems) if math_problems else 0)
+    logger.info(f"Evaluating {num_problems_to_eval} problems per graph (from {len(math_problems) if math_problems else 0} available)")
 
     for graph_idx, graph in enumerate(selected_graphs.get_all()):
         try:
@@ -113,14 +88,16 @@ def evaluate_selected_graphs(
             
             graph_problem_scores = []
             graph_execution_times = []
+            problem_match_types = []  # Track match types for each problem
             
-            # Run on each problem
-            for prob_idx, problem_data in enumerate(math_problems[:5]): ### Limit to first 5 problems for faster testing !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            # Run on each problem (use config value, not hardcoded)
+            problems_to_evaluate = math_problems[:num_problems_to_eval]
+            for prob_idx, problem_data in enumerate(problems_to_evaluate):
                 problem = problem_data["question"]
                 expected = problem_data["answer"]
-                category = "hihi" #problem_data.get("category", "unknown")
+                category = problem_data.get("category", "unknown")
                 
-                logger.debug(f"\n  [{prob_idx + 1}/{len(math_problems)}] Category: {category}")
+                logger.debug(f"\n  [{prob_idx + 1}/{num_problems_to_eval}] Category: {category}")
                 
                 # Build initial state
                 initial_state: AgentState = {
@@ -144,73 +121,173 @@ def evaluate_selected_graphs(
                     # Evaluate answer
                     score = _evaluate_answer(llm_output, expected, problem, logger)
                     
+                    # Determine match type for tracking
+                    match_type = "EXACT_MATCH" if score == 1.0 else "CONTAINS" if score == 0.7 else "PARTIAL" if score == 0.5 else "NO_MATCH"
+                    problem_match_types.append(match_type)
+                    
                 except Exception as e:
                     execution_time = time.time() - exec_start
                     logger.warning(f"Error executing multi-agent system: {e}")
                     score = 0.0
+                    problem_match_types.append("ERROR")
                 
                 graph_problem_scores.append(score)
                 graph_execution_times.append(execution_time)
                 
-                logger.debug(f"  [{prob_idx + 1}/{len(math_problems)}] → {score:.2f}\n")
+                logger.debug(f"  [{prob_idx + 1}/{num_problems_to_eval}] → {score:.2f}\n")
             
-            # Average score across all problems
+            # Calculate per-graph statistics
             graph_llm_score = float(np.mean(graph_problem_scores)) if graph_problem_scores else 0.0
+            graph_llm_std = float(np.std(graph_problem_scores)) if graph_problem_scores else 0.0
+            graph_llm_variance = float(np.var(graph_problem_scores)) if graph_problem_scores else 0.0
             avg_execution_time = float(np.mean(graph_execution_times)) if graph_execution_times else 0.0
+            graph_gnn_score = graph.get_gnn_score()
+            
+            # Count problem outcomes
+            num_perfect = sum(1 for s in graph_problem_scores if s == 1.0)
+            num_partial = sum(1 for s in graph_problem_scores if 0.0 < s < 1.0)
+            num_failed = sum(1 for s in graph_problem_scores if s == 0.0)
+            
+            # Calculate prediction error
+            gnn_llm_error = abs(graph_gnn_score - graph_llm_score)
             
             graph.set_llm_score(graph_llm_score, time=avg_execution_time)
             scores.append(graph_llm_score)
-            gnn_scores.append(graph.get_gnn_score())
+            gnn_scores.append(graph_gnn_score)
+            
+            # Store detailed per-graph metrics
+            per_graph_metrics.append({
+                'gnn_predicted_score': graph_gnn_score,
+                'llm_average_score': graph_llm_score,
+                'llm_std': graph_llm_std,
+                'llm_variance': graph_llm_variance,
+                'gnn_llm_absolute_error': gnn_llm_error,
+                'num_problems_evaluated': len(graph_problem_scores),
+                'num_perfect_scores': num_perfect,
+                'num_partial_scores': num_partial,
+                'num_failed_scores': num_failed,
+                'problem_scores': graph_problem_scores,  # For visualization
+                'avg_execution_time': avg_execution_time
+            })
             
             logger.info(
                 f"[Graph {graph_idx + 1}] "
-                f"LLM Score: {graph_llm_score:.4f} | "
-                f"Problem Scores: {[f'{s:.2f}' for s in graph_problem_scores]}"
+                f"GNN Predicted: {graph_gnn_score:.4f} | "
+                f"LLM Average: {graph_llm_score:.4f} | "
+                f"Error: {gnn_llm_error:.4f} | "
+                f"Perfect: {num_perfect}/{len(graph_problem_scores)} | "
+                f"Std: {graph_llm_std:.4f}"
             )
             
         except Exception as e:
-            logger.warning(f"Error evaluating graph: {e}")
+            logger.warning(f"Error evaluating graph {graph_idx + 1}: {e}")
             graph.set_llm_score(0.0, time=0.0)
             scores.append(0.0)
+            gnn_scores.append(graph.get_gnn_score())
+            # Add error entry to per_graph_metrics
+            per_graph_metrics.append({
+                'gnn_predicted_score': graph.get_gnn_score(),
+                'llm_average_score': 0.0,
+                'llm_std': 0.0,
+                'llm_variance': 0.0,
+                'gnn_llm_absolute_error': graph.get_gnn_score(),
+                'num_problems_evaluated': 0,
+                'num_perfect_scores': 0,
+                'num_partial_scores': 0,
+                'num_failed_scores': 0,
+                'problem_scores': [],
+                'avg_execution_time': 0.0,
+                'error': str(e)
+            })
             continue
 
     
     evaluation_time = time.time() - step_start
     scores_array = np.array(scores)
-    scores_array = np.array(scores)
     gnn_scores_array = np.array(gnn_scores)
-    # Compute RMSE only if we have all predictions and ground truth
+    
+    # Compute aggregate prediction metrics
     if len(scores_array) == len(gnn_scores_array) and len(scores_array) > 0:
         rmse = float(np.sqrt(np.mean((scores_array - gnn_scores_array) ** 2)))
+        mae = float(np.mean(np.abs(scores_array - gnn_scores_array)))
+        
+        # Correlation coefficient
+        if len(scores_array) > 1:
+            correlation = float(np.corrcoef(scores_array, gnn_scores_array)[0, 1])
+        else:
+            correlation = None
     else:
         rmse = None
+        mae = None
+        correlation = None
     
+    # Aggregate variance metrics (mean variance across all graphs)
+    graph_variances = [m['llm_variance'] for m in per_graph_metrics if 'llm_variance' in m]
+    mean_variance_across_graphs = float(np.mean(graph_variances)) if graph_variances else None
+    mean_std_across_graphs = float(np.mean([m['llm_std'] for m in per_graph_metrics if 'llm_std' in m])) if per_graph_metrics else None
+    
+    # Aggregate success metrics
+    total_perfect = sum(m.get('num_perfect_scores', 0) for m in per_graph_metrics)
+    total_partial = sum(m.get('num_partial_scores', 0) for m in per_graph_metrics)
+    total_failed = sum(m.get('num_failed_scores', 0) for m in per_graph_metrics)
+    total_problems_evaluated = sum(m.get('num_problems_evaluated', 0) for m in per_graph_metrics)
+    
+    # Calculate actual number of evaluations (not theoretical)
+    actual_num_evaluations = total_problems_evaluated
 
     metrics = {
         'step_name': 'llm_evaluation',
         'duration_seconds': round(evaluation_time, 4),
         'num_graphs': num_graphs,
-        'num_problems': len(math_problems),
-        'num_evaluations': num_graphs * len(math_problems),
+        'num_problems_available': len(math_problems) if math_problems else 0,
+        'num_problems_per_graph': num_problems_to_eval,
+        'num_evaluations': actual_num_evaluations,  # Actual, not theoretical
         'best_evaluated': float(scores_array.max()) if len(scores_array) > 0 else None,
         'worst_evaluated': float(scores_array.min()) if len(scores_array) > 0 else None,
         'mean_evaluated': float(scores_array.mean()) if len(scores_array) > 0 else None,
         'std_evaluated': float(scores_array.std()) if len(scores_array) > 0 else None,
+        
+        # GNN vs LLM prediction metrics
         'rmse_gnn_vs_llm': rmse,
+        'mae_gnn_vs_llm': mae,
+        'correlation_gnn_llm': correlation,
+        'mean_absolute_error_per_graph': mae,  # Same as mae, for consistency
+        
+        # Variance/consistency metrics
+        'mean_variance_across_graphs': mean_variance_across_graphs,
+        'mean_std_across_graphs': mean_std_across_graphs,
+        
+        # Success rate metrics
+        'total_perfect_scores': total_perfect,
+        'total_partial_scores': total_partial,
+        'total_failed_scores': total_failed,
+        'success_rate_perfect': total_perfect / total_problems_evaluated if total_problems_evaluated > 0 else 0.0,
+        'success_rate_any': (total_perfect + total_partial) / total_problems_evaluated if total_problems_evaluated > 0 else 0.0,
+        
+        # Per-graph details (for detailed analysis/visualization)
+        'per_graph_metrics': per_graph_metrics,
+        
         'metadata': {
             'evaluation_time_per_graph': round(evaluation_time / num_graphs, 4) if num_graphs > 0 else 0,
-            'evaluation_time_per_problem': round(evaluation_time / (num_graphs * len(math_problems)), 4) if num_graphs * len(math_problems) > 0 else 0,
+            'evaluation_time_per_problem': round(evaluation_time / actual_num_evaluations, 4) if actual_num_evaluations > 0 else 0,
             'evaluation_method': 'llm_multiagent_system',
-            'num_problems_per_graph': len(math_problems),
-            'problem_categories': list(set([p.get("category", "unknown") for p in math_problems]))
+            'problem_categories': list(set([p.get("category", "unknown") for p in math_problems])) if math_problems else []
         }
     }
 
-    logger.debug(
+    # Format optional metrics safely
+    rmse_str = f"{metrics['rmse_gnn_vs_llm']:.4f}" if metrics['rmse_gnn_vs_llm'] is not None else "N/A"
+    mae_str = f"{metrics['mae_gnn_vs_llm']:.4f}" if metrics['mae_gnn_vs_llm'] is not None else "N/A"
+    corr_str = f"{metrics['correlation_gnn_llm']:.4f}" if metrics['correlation_gnn_llm'] is not None else "N/A"
+    
+    logger.info(
         f"Evaluation complete - "
-        f"Best: {metrics['best_evaluated']:.4f}, "
-        f"Mean: {metrics['mean_evaluated']:.4f}, "
-        f"RMSE (GNN vs LLM): {metrics['rmse_gnn_vs_llm']}, "
+        f"Graphs: {num_graphs}, Problems/graph: {num_problems_to_eval}, "
+        f"Best LLM: {metrics['best_evaluated']:.4f}, Mean LLM: {metrics['mean_evaluated']:.4f}, "
+        f"RMSE (GNN vs LLM): {rmse_str}, "
+        f"MAE: {mae_str}, "
+        f"Correlation: {corr_str}, "
+        f"Perfect: {total_perfect}/{total_problems_evaluated}, "
         f"Time: {evaluation_time:.4f}s"
     )
     

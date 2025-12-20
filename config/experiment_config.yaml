@@ -1,7 +1,7 @@
 # Graph Generation
 num_graphs_per_iteration: 100000
 generation_strategy: random
-max_nodes: 8
+max_nodes: 7
 max_depth: 1
 
 gnn_model_type: gcn
