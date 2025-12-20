@@ -1,7 +1,7 @@
 # Graph Generation
-num_graphs_per_iteration: 10000
+num_graphs_per_iteration: 100000
 generation_strategy: random
-max_nodes: 20
+max_nodes: 8
 max_depth: 1
 
 gnn_model_type: gcn
@@ -22,12 +22,12 @@ top_k_to_keep: 1000
 eval_k_best: 10
 
 # Evaluation
-num_eval_problems: 10
+num_eval_problems: 5
 eval_timeout_seconds: 30
 llm_model: gpt-4
 
 # Pipeline Control
-max_iterations: 200
+max_iterations: 3
 checkpoint_frequency: 5
 
 # Paths

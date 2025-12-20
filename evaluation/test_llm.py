@@ -77,6 +77,7 @@ class AgentState(TypedDict):
     result: Annotated[list, operator.add]
     node_type: Optional[str]
     node_id: Optional[int]
+    solution: Optional[str]
 
 
 # ============================================================================
@@ -92,18 +93,17 @@ def solver_node(state: AgentState) -> dict:
     
     # SOLVER SPECIFIC PROMPT
     system_prompt = """You are an expert problem solver. Your task is to:
-- Read the task carefully
-- Provide ONLY the final answer to the problem
-- The answer will be evaluated based on correctness
-- Keep your answer concise (maximum 100 characters)
-- Output MUST be wrapped in XML tags"""
+        - Read the task carefully
+        - Provide ONLY the final answer to the problem
+        - The answer will be evaluated based on correctness
+        - Keep your answer concise (maximum 100 characters)
+        - Output MUST be wrapped in XML tags"""
     
     user_prompt = f"""Problem: {problem_text}
-
-Your answer MUST be in this exact format (max 100 characters inside tags):
-<SOLUTION>
-[Your answer here - just the final result]
-</SOLUTION>"""
+        Your answer MUST be in this exact format (max 100 characters inside tags):
+        <SOLUTION>
+        [Your answer here - just the final result]
+        </SOLUTION>"""
     
     assistant_start = "<SOLUTION>"
     
@@ -128,14 +128,12 @@ Your answer MUST be in this exact format (max 100 characters inside tags):
             print(f"   ✓ Parsed solution: {parsed_solution}")
             
             # UPDATE STATE WITH PARSED SOLUTION
-            if 'solution' not in state:
-                state['solution'] = []
-            state['solution'].append(parsed_solution)
+            state['solution'] = parsed_solution
             
-            return {"result": [parsed_solution]}
+            return {"solution": parsed_solution}
         else:
             print(f"   ⚠️  No <SOLUTION> tag found in response")
-            return {"result": [final_response]}
+            return {}
     
     except Exception as e:
         print(f"   ❌ Error: {e}")
@@ -151,28 +149,28 @@ def extract_topic_node(state: AgentState) -> dict:
     
     # EXTRACT_TOPIC SPECIFIC PROMPT
     system_prompt = """You are an expert at identifying key information and creating hierarchical structures.
-Your task is to:
-1. Read the input carefully
-2. Extract the main topic or central theme
-3. Identify 2-5 key subtopics and their relationships
-4. Create a TREE-INSPIRED structure showing how topics relate
-5. Format as a hiring guide - what roles/expertise would be needed to address each topic
+        Your task is to:
+        1. Read the input carefully
+        2. Extract the main topic or central theme
+        3. Identify 2-5 key subtopics and their relationships
+        4. Create a TREE-INSPIRED structure showing how topics relate
+        5. Format as a hiring guide - what roles/expertise would be needed to address each topic
 
-Be precise, hierarchical, and useful for team-building decisions."""
+        Be precise, hierarchical, and useful for team-building decisions."""
     
     user_prompt = f"""Content: {problem_text}
 
-Extract and structure the main topic in a tree format for hiring decisions:
-<TOPIC_TREE>
-MAIN_TOPIC: [Main topic here]
-├─ SUBTOPIC_1: [First subtopic]
-│  └─ EXPERTISE_NEEDED: [What skills/roles needed]
-├─ SUBTOPIC_2: [Second subtopic]
-│  └─ EXPERTISE_NEEDED: [What skills/roles needed]
-└─ SUBTOPIC_3: [Third subtopic]
-   └─ EXPERTISE_NEEDED: [What skills/roles needed]
-HIRING_RECOMMENDATION: [What roles to hire]
-</TOPIC_TREE>"""
+        Extract and structure the main topic in a tree format for hiring decisions:
+        <TOPIC_TREE>
+        MAIN_TOPIC: [Main topic here]
+        ├─ SUBTOPIC_1: [First subtopic]
+        │  └─ EXPERTISE_NEEDED: [What skills/roles needed]
+        ├─ SUBTOPIC_2: [Second subtopic]
+        │  └─ EXPERTISE_NEEDED: [What skills/roles needed]
+        └─ SUBTOPIC_3: [Third subtopic]
+        └─ EXPERTISE_NEEDED: [What skills/roles needed]
+        HIRING_RECOMMENDATION: [What roles to hire]
+        </TOPIC_TREE>"""
     
     assistant_start = "<TOPIC_TREE>\n"
     
@@ -213,28 +211,28 @@ def validator_node(state: AgentState) -> dict:
     
     # VALIDATOR SPECIFIC PROMPT
     system_prompt = """You are a critical quality assurance expert. Your task is to:
-1. Review the provided solution or information
-2. Check for logical consistency and correctness
-3. Try to find counter-examples or edge cases that break the solution
-4. If you find ANY issue or counter-example, output FALSE
-5. If the solution is completely correct, output TRUE
+        1. Review the provided solution or information
+        2. Check for logical consistency and correctness
+        3. Try to find counter-examples or edge cases that break the solution
+        4. If you find ANY issue or counter-example, output FALSE
+        5. If the solution is completely correct, output TRUE
 
-Be VERY critical and skeptical. Look for hidden errors."""
+        Be VERY critical and skeptical. Look for hidden errors."""
     
     user_prompt = f"""Solution to validate: {most_recent_result}
 
-Check this solution carefully. If it's correct in ALL cases, output:
-<VALIDATION>
-RESULT: TRUE
-REASONING: [Why this is correct]
-</VALIDATION>
+        Check this solution carefully. If it's correct in ALL cases, output:
+        <VALIDATION>
+        RESULT: TRUE
+        REASONING: [Why this is correct]
+        </VALIDATION>
 
-If you find ANY flaw or counter-example, output:
-<VALIDATION>
-RESULT: FALSE
-COUNTER_EXAMPLE: [Specific case where it fails]
-ISSUE: [Why this breaks the solution]
-</VALIDATION>"""
+        If you find ANY flaw or counter-example, output:
+        <VALIDATION>
+        RESULT: FALSE
+        COUNTER_EXAMPLE: [Specific case where it fails]
+        ISSUE: [Why this breaks the solution]
+        </VALIDATION>"""
     
     assistant_start = "<VALIDATION>\n"
     
@@ -249,7 +247,7 @@ ISSUE: [Why this breaks the solution]
         final_response = assistant_start + response
         state['global_knowledge'].add(node_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")
-        return {"result": [final_response]}
+        return {}
     except Exception as e:
         print(f"   ❌ Error: {e}")
         state['global_knowledge'].add(node_id, f"Error: {str(e)}")
@@ -274,25 +272,25 @@ def combine_all_node(state: AgentState, combine_all_edges: dict) -> dict:
     
     # COMBINE_ALL SPECIFIC PROMPT
     system_prompt = """You are an expert synthesizer and decision-maker. Your task is to:
-1. Review all the provided results from different analysis nodes
-2. Compare different perspectives and solutions
-3. Synthesize findings into a FINAL VERDICT
-4. Create a clear recommendation
-5. Highlight any conflicts or important insights
+        1. Review all the provided results from different analysis nodes
+        2. Compare different perspectives and solutions
+        3. Synthesize findings into a FINAL VERDICT
+        4. Create a clear recommendation
+        5. Highlight any conflicts or important insights
 
-Be objective and create a clear final recommendation."""
+        Be objective and create a clear final recommendation."""
     
     user_prompt = f"""Synthesis Request - Combine these results:
 
-{results_text}
+        {results_text}
 
-Create a final synthesis:
-<SYNTHESIS>
-FINAL_VERDICT: [Summary of findings]
-CONFIDENCE: [HIGH/MEDIUM/LOW]
-KEY_FINDINGS: [Summary of key points]
-RECOMMENDATION: [What to do based on results]
-</SYNTHESIS>"""
+        Create a final synthesis:
+        <SYNTHESIS>
+        FINAL_VERDICT: [Summary of findings]
+        CONFIDENCE: [HIGH/MEDIUM/LOW]
+        KEY_FINDINGS: [Summary of key points]
+        RECOMMENDATION: [What to do based on results]
+        </SYNTHESIS>"""
     
     assistant_start = "<SYNTHESIS>\n"
     
@@ -307,12 +305,38 @@ RECOMMENDATION: [What to do based on results]
         final_response = assistant_start + response
         state['global_knowledge'].add(node_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")
-        return {"result": [final_response]}
+        return {}
     except Exception as e:
         print(f"   ❌ Error: {e}")
         state['global_knowledge'].add(node_id, f"Error: {str(e)}")
-        return {"result": [f"Error: {str(e)}"]}
+        return {}
 
+def split_node(state: AgentState) -> dict:
+    """Split node - pass-through (does nothing)"""
+    node_id = state.get("node_id")
+    print(f"\n✂️  Split-{node_id}: Pass-through")
+    return {}
+
+
+def python_solver_node(state: AgentState) -> dict:
+    """Python solver node - pass-through (does nothing)"""
+    node_id = state.get("node_id")
+    print(f"\n🐍 Python_solver-{node_id}: Pass-through")
+    return {}
+
+
+def decompose_node(state: AgentState) -> dict:
+    """Decompose node - pass-through (does nothing)"""
+    node_id = state.get("node_id")
+    print(f"\n📋 Decompose-{node_id}: Pass-through")
+    return {}
+
+
+def explain_node(state: AgentState) -> dict:
+    """Explain node - pass-through (does nothing)"""
+    node_id = state.get("node_id")
+    print(f"\n📖 Explain-{node_id}: Pass-through")
+    return {}
 
 # ============================================================================
 # BUILD LANGGRAPH FROM STRUCTURE
@@ -348,6 +372,11 @@ def build_langgraph(nodes: List[Tuple[int, str]], edges: List[Tuple[int, int]]):
         "Solver": solver_node,
         "Extract_topic": extract_topic_node,
         "Validator": validator_node,
+        "Split": split_node,                  
+        "Python_solver": python_solver_node,   
+        "Decompose": decompose_node,          
+        "Explain": explain_node,                
+
     }
     
     print("\n  Adding nodes:")
@@ -517,7 +546,8 @@ def run_example(example: Dict[str, Any], problem: str):
         "global_knowledge": GlobalKnowledge(),
         "result": [],
         "node_type": None,
-        "node_id": None
+        "node_id": None,
+        "solution": None
     }
     
     print("\nEXECUTING LANGGRAPH\n")
