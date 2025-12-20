@@ -23,8 +23,11 @@ except ImportError:
 # LLM SETUP - CONFIGURABLE PROVIDER (GROQ OR LOCAL)
 # ============================================================================
 
-# Groq client will automatically use GROQ_API_KEY environment variable (only if using Groq)
-client = None
+# Groq client pool for multiple API keys (loaded from .env file)
+_groq_clients = []  # List of Groq client instances, one per API key
+_current_client_index = 0  # Index of currently active client
+_rate_limited_api_keys = set()  # Set of API key indices that are rate-limited
+_api_key_last_model = {}  # Track last model used per API key (to avoid repeating when switching back)
 _local_llm_model = None
 _local_llm_tokenizer = None
 _local_llm_device = None
@@ -168,26 +171,139 @@ def call_local_llm(messages: List[Dict], model_name: str, device: str = "auto", 
     response = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
     return response.strip()
 
-# Initialize Groq client only if we might use it
-try:
-    client = Groq()
-except Exception:
-    pass  # Will fail gracefully if GROQ_API_KEY not set
+def initialize_groq_clients():
+    """Initialize Groq client(s) from GROQ_API_KEYS in .env file (comma-separated)."""
+    global _groq_clients, _current_client_index, _rate_limited_api_keys, _api_key_last_model
+    
+    _groq_clients = []
+    _current_client_index = 0
+    _rate_limited_api_keys = set()
+    _api_key_last_model = {}
+    
+    # Load comma-separated API keys from environment
+    groq_api_keys_str = os.getenv("GROQ_API_KEYS", "").strip()
+    if not groq_api_keys_str:
+        print("⚠️  No Groq API keys found. Set GROQ_API_KEYS in .env file (comma-separated)")
+        return
+    
+    api_keys = [key.strip() for key in groq_api_keys_str.split(",") if key.strip()]
+    
+    # Initialize clients
+    for i, api_key in enumerate(api_keys):
+        try:
+            _groq_clients.append(Groq(api_key=api_key))
+            _api_key_last_model[i] = None
+            print(f"✓ Initialized Groq API key {i+1}/{len(api_keys)}")
+        except Exception as e:
+            print(f"⚠️  Failed to initialize Groq API key {i+1}: {e}")
+    
+    if len(_groq_clients) > 0:
+        print(f"✓ Initialized {len(_groq_clients)} Groq API key(s)")
+
+def get_next_available_client_and_model(model_pool: List[str], current_model: str = None):
+    """Get the next available Groq client and model.
+    
+    Priority: Keep the same model for the agent type, only switch models if necessary.
+    
+    Args:
+        model_pool: List of available models for this agent type
+        current_model: Preferred model to use (priority is to keep this model)
+    
+    Returns:
+        Tuple of (Groq client, model name), or (None, None) if no clients available
+    """
+    global _groq_clients, _current_client_index, _rate_limited_api_keys, _api_key_last_model
+    
+    if len(_groq_clients) == 0:
+        return None, None
+    
+    # Filter out rate-limited API keys
+    available_indices = [i for i in range(len(_groq_clients)) if i not in _rate_limited_api_keys]
+    
+    if len(available_indices) == 0:
+        # All API keys are rate-limited, reset and use all
+        print("⚠️  All Groq API keys are rate-limited. Resetting and trying all keys again...")
+        _rate_limited_api_keys.clear()
+        available_indices = list(range(len(_groq_clients)))
+    
+    # Priority 1: Try to use the same model (current_model) with a different API key
+    if current_model and current_model in model_pool:
+        # Find an API key that hasn't been rate-limited with this model
+        for idx in available_indices:
+            if not is_model_rate_limited(current_model, idx):
+                # This API key is available and this model works on it
+                _current_client_index = idx
+                client = _groq_clients[_current_client_index]
+                _api_key_last_model[_current_client_index] = current_model
+                return client, current_model
+        
+        # If we get here, all API keys are rate-limited with this model
+        # Fall through to try a different model
+    
+    # Priority 2: If preferred model not available, rotate to next API key and use first available model
+    # Rotate to next available API key
+    if _current_client_index not in available_indices:
+        _current_client_index = available_indices[0]
+    else:
+        # Find next available API key after current
+        current_pos = available_indices.index(_current_client_index)
+        _current_client_index = available_indices[(current_pos + 1) % len(available_indices)]
+    
+    client = _groq_clients[_current_client_index]
+    
+    # Select model: prefer first model in pool, or next model if this API key used a different one before
+    last_model = _api_key_last_model.get(_current_client_index)
+    if last_model and last_model in model_pool and len(model_pool) > 1:
+        # This API key used a different model before, try next one
+        try:
+            last_index = model_pool.index(last_model)
+            model_index = (last_index + 1) % len(model_pool)
+        except ValueError:
+            model_index = 0
+    else:
+        # Use first model in pool (or preferred model if it's first)
+        if current_model and current_model in model_pool:
+            model_index = model_pool.index(current_model)
+        else:
+            model_index = 0
+    
+    selected_model = model_pool[model_index]
+    _api_key_last_model[_current_client_index] = selected_model
+    
+    return client, selected_model
+
+def mark_api_key_rate_limited(api_key_index: int):
+    """Mark an API key as rate-limited."""
+    global _rate_limited_api_keys
+    _rate_limited_api_keys.add(api_key_index)
+    print(f"⚠️  Groq API key {api_key_index + 1} marked as rate-limited, switching to next key...")
+
+# Initialize Groq clients on import
+initialize_groq_clients()
 
 # ============================================================================
 # MODEL POOLS FOR RATE LIMIT DISTRIBUTION
 # ============================================================================
 
-# Track models that are currently rate-limited (to avoid using them)
-_rate_limited_models = set()
+# Track models that are currently rate-limited per API key (to avoid using same model+key combination)
+_rate_limited_model_key_combos = set()  # Set of (api_key_index, model) tuples
 
-def mark_model_rate_limited(model: str):
-    """Mark a model as rate-limited so we can avoid it temporarily"""
-    _rate_limited_models.add(model)
+def mark_model_rate_limited(model: str, api_key_index: int = None):
+    """Mark a model as rate-limited for a specific API key (or all keys if api_key_index is None)"""
+    if api_key_index is not None:
+        _rate_limited_model_key_combos.add((api_key_index, model))
+    else:
+        # Mark for all API keys
+        for i in range(len(_groq_clients)):
+            _rate_limited_model_key_combos.add((i, model))
 
-def is_model_rate_limited(model: str) -> bool:
-    """Check if a model is currently marked as rate-limited"""
-    return model in _rate_limited_models
+def is_model_rate_limited(model: str, api_key_index: int = None) -> bool:
+    """Check if a model is rate-limited for a specific API key (or any key if api_key_index is None)"""
+    if api_key_index is not None:
+        return (api_key_index, model) in _rate_limited_model_key_combos
+    else:
+        # Check if rate-limited on any API key
+        return any((i, model) in _rate_limited_model_key_combos for i in range(len(_groq_clients)))
 
 # Solver models - good for problem-solving tasks (prioritize 14.4K RPD models)
 SOLVER_MODELS = [
@@ -218,7 +334,7 @@ def select_model_deterministic(problem_text: str, model_pool: List[str]) -> str:
     """
     Deterministically select a model from pool based on problem text.
     Uses first character of problem to ensure consistent selection.
-    Avoids models that are currently rate-limited.
+    Avoids models that are rate-limited on ALL API keys (but will still try them if needed).
     
     Args:
         problem_text: The problem text to base selection on
@@ -228,16 +344,16 @@ def select_model_deterministic(problem_text: str, model_pool: List[str]) -> str:
         Selected model name
     """
     if not problem_text:
-        # Return first non-rate-limited model, or first model if all are rate-limited
+        # Return first model that's not rate-limited on all API keys, or first model if all are
         for model in model_pool:
-            if not is_model_rate_limited(model):
+            if not is_model_rate_limited(model):  # Check if rate-limited on all keys
                 return model
         return model_pool[0]
     
-    # Filter out rate-limited models
+    # Filter out models that are rate-limited on ALL API keys
     available_models = [m for m in model_pool if not is_model_rate_limited(m)]
     if not available_models:
-        # If all models are rate-limited, use the original pool
+        # If all models are rate-limited everywhere, use the original pool anyway
         available_models = model_pool
     
     # Use first character (or first non-space char) to determine model
@@ -248,7 +364,7 @@ def select_model_deterministic(problem_text: str, model_pool: List[str]) -> str:
     if char_index < 0 or char_index > 25:
         char_index = 0  # Default for non-letter characters
     
-    # Select model based on character index from available (non-rate-limited) models
+    # Select model based on character index from available models
     model_index = char_index % len(available_models)
     return available_models[model_index]
 
@@ -365,30 +481,78 @@ def call_ollama(messages: List[Dict], model: str = None, max_tokens: int = 128, 
             )
         raise
 
-def call_groq_with_retry(messages: List[Dict], model: str = "llama-3.1-8b-instant", max_tokens: int = 128, max_retries: int = 5) -> str:
-    """Generic Groq API call with retry logic"""
-    if client is None:
-        raise RuntimeError("Groq client not initialized. Set GROQ_API_KEY environment variable or switch to local LLM.")
+def call_groq_with_retry(messages: List[Dict], model: str = "llama-3.1-8b-instant", max_tokens: int = 128, max_retries: int = 5, model_pool: List[str] = None) -> str:
+    """Generic Groq API call with retry logic and automatic API key + model rotation
+    
+    Args:
+        messages: List of message dicts
+        model: Model name (used to determine model pool if model_pool not provided)
+        max_tokens: Maximum tokens to generate
+        max_retries: Maximum retry attempts
+        model_pool: Optional list of models to choose from. If None, determines pool based on model name.
+    """
+    global _current_client_index
+    
+    if len(_groq_clients) == 0:
+        raise RuntimeError("Groq client not initialized. Set GROQ_API_KEYS in .env file (comma-separated).")
+    
+    # Determine model pool if not provided
+    if model_pool is None:
+        # Check which pool the model belongs to
+        if model in SOLVER_MODELS:
+            model_pool = SOLVER_MODELS
+        elif model in EXTRACT_TOPIC_MODELS:
+            model_pool = EXTRACT_TOPIC_MODELS
+        elif model in VALIDATOR_MODELS:
+            model_pool = VALIDATOR_MODELS
+        elif model in COMBINE_ALL_MODELS:
+            model_pool = COMBINE_ALL_MODELS
+        else:
+            # Default to SOLVER_MODELS
+            model_pool = SOLVER_MODELS
     
     retry_delay = 2
+    current_model = model
     
     for attempt in range(max_retries):
+        # Get next available client and model (rotates API keys and models)
+        client, selected_model = get_next_available_client_and_model(model_pool, current_model)
+        
+        if client is None:
+            raise RuntimeError("No available Groq clients. All API keys may be rate-limited.")
+        
+        current_api_key_index = _current_client_index
+        
         try:
             chat_completion = client.chat.completions.create(
                 messages=messages,
-                model=model,
+                model=selected_model,
                 max_completion_tokens=max_tokens,
             )
             return chat_completion.choices[0].message.content
         except Exception as e:
             error_msg = str(e).lower()
             if 'rate limit' in error_msg or '429' in error_msg:
-                # Mark this model as rate-limited
-                mark_model_rate_limited(model)
-                wait_time = retry_delay * (2 ** attempt)
-                print(f"      ⏳ Rate limited on {model}. Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                print(f"      ⚠️  Model {model} marked as rate-limited, will avoid it for future requests")
-                time.sleep(wait_time)
+                # Mark this specific API key + model combination as rate-limited
+                mark_model_rate_limited(selected_model, current_api_key_index)
+                
+                # Check if this model is rate-limited on all API keys
+                if is_model_rate_limited(selected_model):
+                    # Model is rate-limited everywhere, mark API key as rate-limited and try different model
+                    mark_api_key_rate_limited(current_api_key_index)
+                    print(f"      ⏳ Rate limited on API key {current_api_key_index + 1} with model {selected_model}. Model rate-limited on all keys, switching API key and model...")
+                elif len(_groq_clients) > 1:
+                    # Model still available on other API keys, just switch API key (keep same model)
+                    mark_api_key_rate_limited(current_api_key_index)
+                    print(f"      ⏳ Rate limited on API key {current_api_key_index + 1} with model {selected_model}. Switching to next API key (keeping same model)...")
+                else:
+                    # Only one API key, wait and retry with different model
+                    mark_api_key_rate_limited(current_api_key_index)
+                    wait_time = retry_delay * (2 ** attempt)
+                    print(f"      ⏳ Rate limited on {selected_model}. Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    # Try different model on next attempt
+                    current_model = selected_model
             elif 'invalid_request_error' in error_msg or '400' in error_msg:
                 if len(messages) > 1:
                     combined_text = ""
@@ -402,7 +566,7 @@ def call_groq_with_retry(messages: List[Dict], model: str = "llama-3.1-8b-instan
                     
                     chat_completion = client.chat.completions.create(
                         messages=messages,
-                        model=model,
+                        model=selected_model,
                         max_completion_tokens=max_tokens,
                     )
                     return chat_completion.choices[0].message.content
@@ -439,7 +603,20 @@ def call_llm(messages: List[Dict], model: str = None, max_tokens: int = 128, max
         # Use Groq - model parameter is used
         if model is None:
             model = "llama-3.1-8b-instant"  # Default Groq model
-        return call_groq_with_retry(messages, model, max_tokens, max_retries)
+        
+        # Determine model pool based on model name
+        if model in SOLVER_MODELS:
+            model_pool = SOLVER_MODELS
+        elif model in EXTRACT_TOPIC_MODELS:
+            model_pool = EXTRACT_TOPIC_MODELS
+        elif model in VALIDATOR_MODELS:
+            model_pool = VALIDATOR_MODELS
+        elif model in COMBINE_ALL_MODELS:
+            model_pool = COMBINE_ALL_MODELS
+        else:
+            model_pool = SOLVER_MODELS  # Default
+        
+        return call_groq_with_retry(messages, model, max_tokens, max_retries, model_pool=model_pool)
 
 # Backward compatibility: call_groq_with_retry is now an alias that routes through call_llm
 # But we keep the original function for direct Groq calls when needed

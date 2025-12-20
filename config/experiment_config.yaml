@@ -1,7 +1,7 @@
 # Graph Generation
 num_graphs_per_iteration: 100000
 generation_strategy: random
-max_nodes: 6
+max_nodes: 7
 max_depth: 2
 
 gnn_model_type: gcn
@@ -18,11 +18,11 @@ gnn_epochs: 200
 gnn_device: cuda
 
 # Selection Strategy
-top_k_to_keep: 10 # Number of graphs to keep after each iteration should be smaller in starting sets
+top_k_to_keep: 20 # Number of graphs to keep after each iteration should be smaller in starting sets
 eval_k_best: 4 # Number of graphs to evaluate after each iteration
 
 # Evaluation
-num_eval_problems: 3
+num_eval_problems: 4
 eval_timeout_seconds: 30
 #llm_model: gpt-4
 
