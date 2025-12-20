@@ -3,7 +3,7 @@ import random
 import time
 from typing import List, Dict, Any, Tuple
 from config.settings import Config
-from evaluation.test_llm import build_langgraph, visualize_graph_ascii, AgentState, GlobalKnowledge  
+from evaluation.test_llm import build_langgraph, visualize_graph_ascii, AgentState, GlobalKnowledge, set_llm_provider
 import numpy as np
 from data_management.graph_storage import GraphSet
 
@@ -62,6 +62,14 @@ def evaluate_selected_graphs(
     selected_graphs: GraphSet,
     math_problems: Any,
 ) -> Tuple[Dict[str, Any], GraphSet]:
+    # Set LLM provider based on config
+    set_llm_provider(
+        provider=getattr(config, 'llm_provider', 'groq'),
+        local_model=getattr(config, 'local_llm_model', 'microsoft/Phi-3-mini-4k-instruct'),
+        local_device=getattr(config, 'local_llm_device', 'auto'),
+        ollama_model=getattr(config, 'ollama_model', 'llama3.2'),
+        ollama_base_url=getattr(config, 'ollama_base_url', 'http://localhost:11434')
+    )
     
     step_start = time.time()
     num_graphs = selected_graphs.size()

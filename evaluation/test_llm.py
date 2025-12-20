@@ -6,6 +6,12 @@ from groq import Groq
 from langgraph.graph import StateGraph, START, END
 import time
 
+# Import requests for Ollama API (optional dependency)
+try:
+    import requests
+except ImportError:
+    requests = None  # Will fail gracefully if Ollama provider is used without requests
+
 # Try to load .env file if python-dotenv is available
 try:
     from dotenv import load_dotenv
@@ -14,11 +20,159 @@ except ImportError:
     pass  # python-dotenv not installed, use environment variables directly
 
 # ============================================================================
-# LLM SETUP - GROQ FREE VERSION
+# LLM SETUP - CONFIGURABLE PROVIDER (GROQ OR LOCAL)
 # ============================================================================
 
-# Groq client will automatically use GROQ_API_KEY environment variable
-client = Groq()
+# Groq client will automatically use GROQ_API_KEY environment variable (only if using Groq)
+client = None
+_local_llm_model = None
+_local_llm_tokenizer = None
+_local_llm_device = None
+
+def _get_local_llm_device():
+    """Auto-detect best device for local LLM (prioritizes CUDA, then MPS, then CPU)"""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            return "mps"  # Apple Silicon GPU acceleration
+        return "cpu"
+    except ImportError:
+        return "cpu"
+
+def _load_local_llm(model_name: str, device: str = "auto"):
+    """Lazy load local LLM model and tokenizer"""
+    global _local_llm_model, _local_llm_tokenizer, _local_llm_device
+    
+    if _local_llm_model is not None:
+        return _local_llm_model, _local_llm_tokenizer, _local_llm_device
+    
+    try:
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        import torch
+    except ImportError:
+        raise ImportError(
+            "transformers and torch are required for local LLM. Install with: "
+            "pip install transformers torch"
+        )
+    
+    if device == "auto":
+        device = _get_local_llm_device()
+    
+    _local_llm_device = device
+    print(f"📦 Loading local LLM: {model_name} on {device}...")
+    
+    # Load tokenizer
+    _local_llm_tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    if _local_llm_tokenizer.pad_token is None:
+        _local_llm_tokenizer.pad_token = _local_llm_tokenizer.eos_token
+    
+    # Check if model name indicates quantization preference
+    use_quantization = "-4bit" in model_name.lower() or "-8bit" in model_name.lower()
+    
+    # Load model with appropriate settings
+    if device == "cuda":
+        if use_quantization:
+            # Try to use 4-bit quantization on CUDA if bitsandbytes is available
+            try:
+                from transformers import BitsAndBytesConfig
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16
+                )
+                _local_llm_model = AutoModelForCausalLM.from_pretrained(
+                    model_name.replace("-4bit", "").replace("-8bit", ""),
+                    quantization_config=quantization_config,
+                    device_map="auto",
+                    trust_remote_code=True
+                )
+            except ImportError:
+                print("⚠️  bitsandbytes not available, loading full precision model")
+                use_quantization = False
+        
+        if not use_quantization:
+            _local_llm_model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                device_map="auto",
+                trust_remote_code=True
+            )
+    elif device == "mps":
+        # Apple Silicon: Use float16 for better performance on MPS
+        # Note: 4-bit quantization with bitsandbytes doesn't work well on MPS,
+        # so we use smaller models or bfloat16 for speed
+        dtype = torch.bfloat16 if hasattr(torch, 'bfloat16') and torch.backends.mps.is_available() else torch.float16
+        _local_llm_model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=dtype,  # bfloat16 or float16 for MPS (faster than float32)
+            trust_remote_code=True
+        ).to(device)
+    else:
+        # CPU: Use float32 (float16 not well supported on CPU)
+        _local_llm_model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float32,
+            trust_remote_code=True
+        ).to(device)
+    
+    _local_llm_model.eval()  # Set to evaluation mode
+    print(f"✓ Local LLM loaded successfully")
+    
+    return _local_llm_model, _local_llm_tokenizer, _local_llm_device
+
+def call_local_llm(messages: List[Dict], model_name: str, device: str = "auto", max_tokens: int = 128) -> str:
+    """Call local LLM using transformers library"""
+    model, tokenizer, device = _load_local_llm(model_name, device)
+    
+    # Convert messages to prompt format (chat template if available, else simple format)
+    if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None:
+        # Use chat template if available (most modern models)
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+    else:
+        # Fallback: simple format
+        prompt_parts = []
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "system":
+                prompt_parts.append(f"System: {content}\n")
+            elif role == "user":
+                prompt_parts.append(f"User: {content}\n")
+            elif role == "assistant":
+                prompt_parts.append(f"Assistant: {content}")
+        prompt = "".join(prompt_parts) + "\nAssistant:"
+    
+    # Tokenize
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    
+    # Generate with optimized settings for speed
+    import torch
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_tokens,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9,
+            pad_token_id=tokenizer.eos_token_id,
+            # Optimizations for speed
+            use_cache=True,  # KV cache for faster generation
+        )
+    
+    # Decode response
+    response = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+    return response.strip()
+
+# Initialize Groq client only if we might use it
+try:
+    client = Groq()
+except Exception:
+    pass  # Will fail gracefully if GROQ_API_KEY not set
 
 # ============================================================================
 # MODEL POOLS FOR RATE LIMIT DISTRIBUTION
@@ -35,33 +189,29 @@ def is_model_rate_limited(model: str) -> bool:
     """Check if a model is currently marked as rate-limited"""
     return model in _rate_limited_models
 
-# Solver models - good for problem-solving tasks (prioritize high RPD)
+# Solver models - good for problem-solving tasks (prioritize 14.4K RPD models)
 SOLVER_MODELS = [
-    #"llama-3.1-8b-instant",                    # Commented: no daily limit available
-    "meta-llama/llama-guard-4-12b",            # 30 RPM, 14.4K RPD, 15K TPM (high daily limit)
-    "meta-llama/llama-prompt-guard-2-22m",     # 30 RPM, 14.4K RPD, 15K TPM (high daily limit)
-    "allam-2-7b",                              # 30 RPM, 7K RPD, 6K TPM (decent daily limit)
+    "llama-3.1-8b-instant",                    # Fast, good quality, 30 RPM, 14.4K RPD, 6K TPM
+    "allam-2-7b",                              # Good quality, 30 RPM, 14.4K RPD, 6K TPM
 ]
 
 # Extract topic models - good for analysis/understanding tasks (needs 800 tokens, so models must support >= 800)
+# Only models with 14.4K RPD
 EXTRACT_TOPIC_MODELS = [
-    #"llama-3.1-8b-instant",                    # Commented: no daily limit available
-    "meta-llama/llama-guard-4-12b",            # 30 RPM, 14.4K RPD, 15K TPM (high daily limit, supports 800 tokens)
-    # Note: llama-prompt-guard-2-86m has 512 token limit, removed since extract_topic needs 800
+    "llama-3.1-8b-instant",                    # Fast, good quality, 30 RPM, 14.4K RPD, supports 800+ tokens
+    "allam-2-7b",                              # Good quality, 30 RPM, 14.4K RPD, supports 800+ tokens
 ]
 
-# Validator models - good for validation/critical analysis
+# Validator models - good for validation/critical analysis (14.4K RPD models)
 VALIDATOR_MODELS = [
-    #"llama-3.1-8b-instant",                    # Commented: no daily limit available
-    "meta-llama/llama-guard-4-12b",            # 30 RPM, 14.4K RPD, 15K TPM (guard model, perfect for validation)
-    "meta-llama/llama-prompt-guard-2-86m",     # 30 RPM, 14.4K RPD, 15K TPM (high daily limit)
+    "llama-3.1-8b-instant",                    # Fast, good quality, 30 RPM, 14.4K RPD
+    "allam-2-7b",                              # Good quality, 30 RPM, 14.4K RPD
 ]
 
-# Combine all models - good for synthesis tasks
+# Combine all models - good for synthesis tasks (14.4K RPD models)
 COMBINE_ALL_MODELS = [
-    #"llama-3.1-8b-instant",                    # Commented: no daily limit available
-    "meta-llama/llama-guard-4-12b",            # 30 RPM, 14.4K RPD, 15K TPM (high daily limit)
-    "meta-llama/llama-prompt-guard-2-86m",     # 30 RPM, 14.4K RPD, 15K TPM (high daily limit)
+    "llama-3.1-8b-instant",                    # Fast, good quality, 30 RPM, 14.4K RPD
+    "allam-2-7b",                              # Good quality, 30 RPM, 14.4K RPD
 ]
 
 def select_model_deterministic(problem_text: str, model_pool: List[str]) -> str:
@@ -103,8 +253,123 @@ def select_model_deterministic(problem_text: str, model_pool: List[str]) -> str:
     return available_models[model_index]
 
 
+# Global provider setting (can be set via environment variable LLM_PROVIDER or by calling set_llm_provider)
+_llm_provider = os.getenv("LLM_PROVIDER", "groq").lower()  # Default to groq
+_local_model_name = os.getenv("LOCAL_LLM_MODEL", "microsoft/Phi-3-mini-4k-instruct")
+_local_device = os.getenv("LOCAL_LLM_DEVICE", "auto").lower()
+_ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+_ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
+
+def set_llm_provider(provider: str, local_model: str = None, local_device: str = None, ollama_model: str = None, ollama_base_url: str = None):
+    """Set the LLM provider globally. Call this before using LLM functions.
+    
+    Args:
+        provider: "groq", "local", or "ollama"
+        local_model: HuggingFace model name (only used if provider="local")
+        local_device: "auto", "cuda", "mps", or "cpu" (only used if provider="local")
+        ollama_model: Ollama model name (only used if provider="ollama")
+        ollama_base_url: Ollama API base URL (only used if provider="ollama")
+    """
+    global _llm_provider, _local_model_name, _local_device, _ollama_model, _ollama_base_url
+    _llm_provider = provider.lower()
+    if local_model:
+        _local_model_name = local_model
+    if local_device:
+        _local_device = local_device.lower()
+    if ollama_model:
+        _ollama_model = ollama_model
+    if ollama_base_url:
+        _ollama_base_url = ollama_base_url
+
+def call_ollama(messages: List[Dict], model: str = None, max_tokens: int = 128, base_url: str = None) -> str:
+    """Call Ollama API for local LLM inference
+    
+    Args:
+        messages: List of message dicts with "role" and "content" keys
+        model: Ollama model name (uses global setting if None)
+        max_tokens: Maximum tokens to generate
+        base_url: Ollama API base URL (uses global setting if None)
+    
+    Returns:
+        Generated text response
+    """
+    global _ollama_model, _ollama_base_url
+    
+    if requests is None:
+        raise ImportError(
+            "requests library is required for Ollama provider. "
+            "Install with: pip install requests"
+        )
+    
+    if base_url is None:
+        base_url = _ollama_base_url
+    if model is None:
+        model = _ollama_model
+    
+    # Convert messages format for Ollama API
+    # Ollama expects a "messages" array with role and content
+    ollama_messages = []
+    for msg in messages:
+        ollama_messages.append({
+            "role": msg["role"],
+            "content": msg["content"]
+        })
+    
+    payload = {
+        "model": model,
+        "messages": ollama_messages,
+        "stream": False,  # Disable streaming for cleaner JSON response
+        "options": {
+            "num_predict": max_tokens,
+            "temperature": 0.7,
+            "top_p": 0.9,
+        }
+    }
+    
+    try:
+        response = requests.post(
+            f"{base_url}/api/chat",
+            json=payload,
+            timeout=300  # 5 minute timeout
+        )
+        response.raise_for_status()
+        
+        # Handle potential JSON parsing issues
+        try:
+            result = response.json()
+        except ValueError as json_err:
+            # If JSON parsing fails, try to extract text from response
+            response_text = response.text
+            raise ValueError(
+                f"Failed to parse Ollama JSON response. "
+                f"Response text (first 500 chars): {response_text[:500]}. "
+                f"JSON error: {json_err}"
+            )
+        
+        # Ollama returns {"message": {"role": "assistant", "content": "..."}}
+        if "message" in result and "content" in result["message"]:
+            return result["message"]["content"].strip()
+        else:
+            raise ValueError(f"Unexpected Ollama response format: {result}")
+            
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(
+            f"Could not connect to Ollama at {base_url}. "
+            "Make sure Ollama is installed and running. Install from: https://ollama.ai"
+        )
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            raise RuntimeError(
+                f"Model '{model}' not found in Ollama. "
+                f"Install it with: ollama pull {model}"
+            )
+        raise
+
 def call_groq_with_retry(messages: List[Dict], model: str = "llama-3.1-8b-instant", max_tokens: int = 128, max_retries: int = 5) -> str:
     """Generic Groq API call with retry logic"""
+    if client is None:
+        raise RuntimeError("Groq client not initialized. Set GROQ_API_KEY environment variable or switch to local LLM.")
+    
     retry_delay = 2
     
     for attempt in range(max_retries):
@@ -147,6 +412,37 @@ def call_groq_with_retry(messages: List[Dict], model: str = "llama-3.1-8b-instan
                 raise
     
     raise RuntimeError(f"Max retries ({max_retries}) reached")
+
+def call_llm(messages: List[Dict], model: str = None, max_tokens: int = 128, max_retries: int = 5) -> str:
+    """
+    Unified LLM call function that routes to Groq, Ollama, or local transformers LLM based on provider setting.
+    
+    Args:
+        messages: List of message dicts with "role" and "content" keys
+        model: Model name (only used for Groq, ignored for Ollama and local transformers)
+        max_tokens: Maximum tokens to generate
+        max_retries: Maximum retry attempts (only for Groq)
+    
+    Returns:
+        Generated text response
+    """
+    global _llm_provider, _local_model_name, _local_device, _ollama_model, _ollama_base_url
+    
+    if _llm_provider == "ollama":
+        # Use Ollama - always use the configured Ollama model (ignore model parameter)
+        # This is because Ollama uses different model names than Groq
+        return call_ollama(messages, _ollama_model, max_tokens, _ollama_base_url)
+    elif _llm_provider == "local":
+        # Use local transformers LLM - model parameter is ignored, use global setting
+        return call_local_llm(messages, _local_model_name, _local_device, max_tokens)
+    else:
+        # Use Groq - model parameter is used
+        if model is None:
+            model = "llama-3.1-8b-instant"  # Default Groq model
+        return call_groq_with_retry(messages, model, max_tokens, max_retries)
+
+# Backward compatibility: call_groq_with_retry is now an alias that routes through call_llm
+# But we keep the original function for direct Groq calls when needed
 
 
 # ============================================================================
@@ -209,7 +505,7 @@ def solver_node(state: AgentState) -> dict:
     ]
     
     try:
-        response = call_groq_with_retry(messages, model=selected_model, max_tokens=150)
+        response = call_llm(messages, model=selected_model, max_tokens=150)
         final_response = assistant_start + response
         state['global_knowledge'].add(node_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")
@@ -280,7 +576,7 @@ def extract_topic_node(state: AgentState) -> dict:
     import time
     try:
         start_time = time.time()
-        response = call_groq_with_retry(messages, model=selected_model, max_tokens=800)
+        response = call_llm(messages, model=selected_model, max_tokens=800)
         elapsed_time = time.time() - start_time
         final_response = assistant_start + response
         state['global_knowledge'].add(node_id, final_response)
@@ -348,7 +644,7 @@ def validator_node(state: AgentState) -> dict:
     ]
     
     try:
-        response = call_groq_with_retry(messages, model=selected_model, max_tokens=400)
+        response = call_llm(messages, model=selected_model, max_tokens=400)
         final_response = assistant_start + response
         state['global_knowledge'].add(node_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")
@@ -410,7 +706,7 @@ def combine_all_node(state: AgentState, combine_all_edges: dict) -> dict:
     ]
     
     try:
-        response = call_groq_with_retry(messages, model=selected_model, max_tokens=500)
+        response = call_llm(messages, model=selected_model, max_tokens=500)
         final_response = assistant_start + response
         state['global_knowledge'].add(node_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")

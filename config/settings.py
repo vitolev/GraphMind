@@ -35,6 +35,13 @@ class Config:
     eval_timeout_seconds: int = 30
     llm_model: str = "gpt-4"
     
+    # LLM Provider Configuration
+    llm_provider: str = "groq"  # Options: "groq", "local" (transformers), or "ollama"
+    local_llm_model: str = "microsoft/Phi-3-mini-4k-instruct"  # HuggingFace model name for local inference
+    local_llm_device: str = "auto"  # Options: "auto", "cuda", "mps", "cpu" - auto detects CUDA/MPS if available
+    ollama_model: str = "llama3.2"  # Ollama model name (e.g., "llama3.2", "qwen2.5", "phi3", "tinyllama")
+    ollama_base_url: str = "http://localhost:11434"  # Ollama API base URL
+    
     # Pipeline Control
     max_iterations: int = 1000
     checkpoint_frequency: int = 5

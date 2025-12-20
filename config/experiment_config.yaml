@@ -1,8 +1,8 @@
 # Graph Generation
 num_graphs_per_iteration: 100000
 generation_strategy: random
-max_nodes: 7
-max_depth: 1
+max_nodes: 6
+max_depth: 2
 
 gnn_model_type: gcn
 data_format: Data
@@ -18,16 +18,30 @@ gnn_epochs: 200
 gnn_device: cuda
 
 # Selection Strategy
-top_k_to_keep: 1000
-eval_k_best: 10
+top_k_to_keep: 10 # Number of graphs to keep after each iteration should be smaller in starting sets
+eval_k_best: 4 # Number of graphs to evaluate after each iteration
 
 # Evaluation
-num_eval_problems: 5
+num_eval_problems: 3
 eval_timeout_seconds: 30
-llm_model: gpt-4
+#llm_model: gpt-4
+
+# LLM Provider Configuration
+# Options: "groq" (uses Groq API), "local" (uses HuggingFace transformers), or "ollama" (RECOMMENDED for speed)
+llm_provider: groq
+# For Ollama provider (FASTEST - ~0.5-2 seconds per call):
+ollama_model: tinyllama  # FASTEST option (~0.3-0.5 sec/call, good enough for simple math)
+# Other Ollama models (install with: ollama pull <model>):
+# - "llama3.2" (~1-2 sec/call, excellent quality) - RECOMMENDED
+# - "qwen2.5" (~1-2 sec/call, great math reasoning)
+# - "gemma2" (~1-2 sec/call, good quality)
+ollama_base_url: http://localhost:11434  # Default Ollama URL
+# For local transformers provider (alternative):
+local_llm_model: TinyLlama/TinyLlama-1.1B-Chat-v1.0  # ~0.5-1 sec/call, decent for simple math
+local_llm_device: auto  # Options: "auto" (detects CUDA/MPS), "cuda", "mps" (Apple Silicon), "cpu"
 
 # Pipeline Control
-max_iterations: 3
+max_iterations: 10
 checkpoint_frequency: 5
 
 # Paths
