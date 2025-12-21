@@ -34,6 +34,7 @@ class Config:
     num_eval_problems: int = 10
     eval_timeout_seconds: int = 30
     llm_model: str = "gpt-4"
+    simulate_llm_evaluation: bool = False  # If True, use deterministic graph-based scoring instead of actual LLM calls
     
     # LLM Provider Configuration
     llm_provider: str = "groq"  # Options: "groq", "local" (transformers), or "ollama"
