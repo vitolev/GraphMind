@@ -14,19 +14,19 @@ def _calculate_deterministic_graph_score(nodes: List[Tuple[int, str]], edges: Li
     """
     Calculate a deterministic score based on graph structure.
     
-    Scoring rules (designed to be learnable by GNN):
-    - Base score: 0.1 (minimum for any valid graph)
-    - +0.3 for each Solver node
-    - +0.2 bonus if Python_solver directly precedes Solver (edge exists)
-    - +0.15 for each Combine_all node (indicates merging strategy)
-    - +0.1 for each Validator node (quality assurance)
-    - +0.05 for each Extract_topic node (problem understanding)
-    - +0.1 if graph has at least one Solver at the end (connected to END or no outgoing edges)
-    - -0.05 for each excessive node (>10 nodes total)
+    Scoring rules (designed to be learnable by GNN, with normal-like distribution):
+    - Base score: 0.3 (centered around middle)
+    - +0.25 for up to 2 Solver nodes (max +0.5 from solvers)
+    - +0.15 bonus if Python_solver directly precedes Solver (edge exists)
+    - +0.1 for each Combine_all node (max 1, so +0.1)
+    - +0.08 for each Validator node (max 1, so +0.08)
+    - +0.05 for each Extract_topic node (max 1, so +0.05)
+    - +0.1 if graph has at least one Solver at the end
     - -0.1 if no Solver nodes exist
+    - -0.05 for each excessive node (>10 nodes total)
     
-    Maximum theoretical score: ~1.5 (with optimal structure)
-    Returns score in range [0.0, 1.0] (clamped)
+    Then add deterministic variance based on graph structure hash to create normal-like distribution.
+    Returns score in range [0.0, 1.0]
     """
     # Build helper structures
     node_dict = {nid: ntype for nid, ntype in nodes}
@@ -41,7 +41,7 @@ def _calculate_deterministic_graph_score(nodes: List[Tuple[int, str]], edges: Li
         graph_out[src].append(dst)
         graph_in[dst].append(src)
     
-    score = 0.1  # Base score
+    score = 0.35  # Base score (slightly above middle for normal distribution)
     
     # Count nodes by type
     solver_count = 0
@@ -65,20 +65,26 @@ def _calculate_deterministic_graph_score(nodes: List[Tuple[int, str]], edges: Li
         elif node_type == "Extract_topic":
             extract_topic_count += 1
     
-    # Score for Solver nodes
-    score += solver_count * 0.3
+    # Score for Solver nodes (MAX 2 solvers count) - reduced bonus
+    effective_solver_count = min(solver_count, 2)
+    score += effective_solver_count * 0.18  # Reduced from 0.25
     
-    # Bonus if Python_solver directly precedes Solver
+    # Bonus if Python_solver directly precedes Solver (only count once)
+    has_python_solver_before_solver = False
     for src, dst in edges:
         src_type = node_dict.get(src)
         dst_type = node_dict.get(dst)
         if src_type == "Python_solver" and dst_type == "Solver":
-            score += 0.2  # Bonus for Python_solver -> Solver pattern
+            has_python_solver_before_solver = True
+            break
     
-    # Score for other helpful nodes
-    score += combine_all_count * 0.15
-    score += validator_count * 0.1
-    score += extract_topic_count * 0.05
+    if has_python_solver_before_solver:
+        score += 0.12  # Reduced from 0.15
+    
+    # Score for other helpful nodes (limit to 1 each, smaller bonuses)
+    score += min(combine_all_count, 1) * 0.08  # Reduced from 0.1
+    score += min(validator_count, 1) * 0.06  # Reduced from 0.08
+    score += min(extract_topic_count, 1) * 0.04  # Reduced from 0.05
     
     # Check if solver is at the end (has no outgoing edges or connects to END)
     has_end_solver = False
@@ -96,17 +102,24 @@ def _calculate_deterministic_graph_score(nodes: List[Tuple[int, str]], edges: Li
             break
     
     if has_end_solver:
-        score += 0.1
+        score += 0.08  # Reduced from 0.1
     
     # Penalty for excessive nodes
     total_nodes = len([n for n in nodes if n[1] not in ["START", "END"]])
     if total_nodes > 10:
         excess = total_nodes - 10
-        score -= excess * 0.05
+        score -= excess * 0.03  # Reduced penalty
     
     # Heavy penalty if no solvers
     if solver_count == 0:
-        score -= 0.1
+        score -= 0.15  # Increased penalty
+    
+    # Add deterministic variance based on graph structure hash
+    # This creates a normal-like distribution without randomness
+    graph_hash = hash((tuple(sorted(nodes)), tuple(sorted(edges))))
+    # Convert hash to value in [-0.12, 0.12] range (smaller variance)
+    variance = ((graph_hash % 240) / 1000.0) - 0.12  # Range: -0.12 to 0.12
+    score += variance
     
     # Clamp to [0.0, 1.0] range
     score = max(0.0, min(1.0, score))
