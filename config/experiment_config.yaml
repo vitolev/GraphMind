@@ -1,7 +1,7 @@
 # Graph Generation
 num_graphs_per_iteration: 200000
 generation_strategy: random
-max_nodes: 9
+max_nodes: 8
 max_depth: 3
 
 gnn_model_type: gcn
@@ -18,14 +18,14 @@ gnn_epochs: 100
 gnn_device: cuda
 
 # Selection Strategy
-top_k_to_keep: 50 # Number of graphs to keep after each iteration should be smaller in starting sets
-eval_k_best: 20 # Number of graphs to evaluate after each iteration
+top_k_to_keep: 10 # Number of graphs to keep after each iteration should be smaller in starting sets
+eval_k_best: 5 # Number of graphs to evaluate after each iteration
 
 # Evaluation
 num_eval_problems: 10
 eval_timeout_seconds: 30
 #llm_model: gpt-4
-simulate_llm_evaluation: true  # Set to true to use deterministic graph-based scoring instead of actual LLM calls
+simulate_llm_evaluation: false  # Set to true to use deterministic graph-based scoring instead of actual LLM calls
 
 # LLM Provider Configuration
 # Options: "groq" (uses Groq API), "local" (uses HuggingFace transformers), or "ollama" (RECOMMENDED for speed)
@@ -42,7 +42,7 @@ local_llm_model: TinyLlama/TinyLlama-1.1B-Chat-v1.0  # ~0.5-1 sec/call, decent f
 local_llm_device: auto  # Options: "auto" (detects CUDA/MPS), "cuda", "mps" (Apple Silicon), "cpu"
 
 # Pipeline Control
-max_iterations: 50
+max_iterations: 15
 checkpoint_frequency: 5
 
 # Paths
@@ -51,5 +51,5 @@ log_dir: ./logs
 data_dir: ./data
 
 # Experiment Info
-experiment_name: more-iterations-simulate-llm
+experiment_name: more-agents-real-llm
 seed: 42
