@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 
 from langgraph.graph import StateGraph, START, END
 
-from evaluation.agent_state import AgentState
+from evaluation.agent_state import AgentState, GraphStructure, ScopedKnowledge, GraphStructure
 from evaluation.agent_nodes import (
     solver_node,
     extract_topic_node,
@@ -141,7 +141,40 @@ def build_langgraph(nodes: List[Tuple[int, str]], edges: List[Tuple[int, int]]):
                 print(f"    ✓ {src_name} → END")
     
     print("\n✓ LangGraph compilation complete\n")
-    return builder.compile()
+    
+    # Create GraphStructure from the nodes and edges
+    graph_structure = GraphStructure(
+        nodes=nodes,
+        edges=edges,
+        graph_in=graph_in,
+        graph_out=graph_out
+    )
+    
+    # Store graph structure in a closure so it can be used when initializing state
+    compiled_graph = builder.compile()
+    
+    # Wrap the compiled graph to ensure graph_structure is available
+    original_invoke = compiled_graph.invoke
+    
+    def invoke_with_graph_state(input_state):
+        """Invoke graph and ensure graph_structure is initialized in state."""
+        # Initialize scoped knowledge if not present
+        if "scoped_knowledge" not in input_state or not input_state.get("scoped_knowledge"):
+            input_state["scoped_knowledge"] = {
+                "root": ScopedKnowledge(scope_id="root")
+            }
+        if "scope_mapping" not in input_state:
+            input_state["scope_mapping"] = {}
+        if "current_scope" not in input_state:
+            input_state["current_scope"] = "root"
+        if "graph_structure" not in input_state or input_state.get("graph_structure") is None:
+            input_state["graph_structure"] = graph_structure
+        return original_invoke(input_state)
+    
+    # Replace invoke method
+    compiled_graph.invoke = invoke_with_graph_state
+    
+    return compiled_graph
 
 
 def visualize_graph_ascii(graph):

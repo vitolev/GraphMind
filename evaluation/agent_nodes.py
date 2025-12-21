@@ -2,7 +2,9 @@
 
 import re
 import time
-from typing import Dict
+import subprocess
+import sys
+from typing import Dict, Optional, List, Any
 
 from evaluation.agent_state import AgentState
 from evaluation.llm_callers import call_llm
@@ -15,14 +17,122 @@ from evaluation.model_selection import (
 )
 
 
+def _get_node_scope(state: AgentState, node_id: int) -> str:
+    """Determine which scope a node belongs to."""
+    # Check if scope is explicitly mapped (e.g., by split node)
+    scope_mapping = state.get("scope_mapping", {})
+    if node_id in scope_mapping:
+        return scope_mapping[node_id]
+    
+    # Otherwise, inherit from incoming edges
+    graph = state.get("graph_structure")
+    if graph:
+        incoming = graph.get_incoming_nodes(node_id)
+        if incoming:
+            # Get scope from first incoming node
+            # Find which scope contains knowledge from that node
+            for scope_id, scope_knowledge in state.get("scoped_knowledge", {}).items():
+                if incoming[0] in scope_knowledge.node_data:
+                    return scope_id
+    
+    # Default to current scope
+    return state.get("current_scope", "root")
+
+
+def _get_incoming_knowledge(state: AgentState, node_id: int, scope_id: str) -> Dict[int, Any]:
+    """Get knowledge from incoming nodes within the specified scope."""
+    graph = state.get("graph_structure")
+    if not graph:
+        return {}
+    
+    incoming_nodes = graph.get_incoming_nodes(node_id)
+    scoped_knowledge = state.get("scoped_knowledge", {})
+    
+    # First try the node's own scope
+    scope_knowledge = scoped_knowledge.get(scope_id)
+    
+    relevant_knowledge = {}
+    if scope_knowledge:
+        for inc_id in incoming_nodes:
+            data = scope_knowledge.get(inc_id)
+            if data is not None:
+                relevant_knowledge[inc_id] = data
+    
+    # If scope is empty, also check parent scope (for nodes after split)
+    # For example, if scope is "root_split_1", also check "root"
+    if not relevant_knowledge and "_split_" in scope_id:
+        parent_scope = scope_id.rsplit("_split_", 1)[0]
+        parent_knowledge = scoped_knowledge.get(parent_scope)
+        if parent_knowledge:
+            for inc_id in incoming_nodes:
+                data = parent_knowledge.get(inc_id)
+                if data is not None:
+                    relevant_knowledge[inc_id] = data
+    
+    return relevant_knowledge
+
+
+def _store_knowledge(state: AgentState, node_id: int, scope_id: str, data: Any):
+    """Store knowledge from a node in its scope."""
+    scoped_knowledge = state.get("scoped_knowledge", {})
+    if scope_id not in scoped_knowledge:
+        from evaluation.agent_state import ScopedKnowledge
+        scoped_knowledge[scope_id] = ScopedKnowledge(scope_id=scope_id)
+        state["scoped_knowledge"] = scoped_knowledge
+    
+    scoped_knowledge[scope_id].add(node_id, data)
+    # Also update legacy global_knowledge for backward compatibility
+    if "global_knowledge" in state:
+        state["global_knowledge"].add(node_id, data)
+
+
 def solver_node(state: AgentState) -> dict:
-    """Solver node - generates concise solution (max 100 chars) and parses result"""
+    """Solver node - generates solution and saves in structured, parseable format.
+    
+    Always saves output in <SOLVER_OUTPUT> tags so Combine_all can easily collect
+    and merge all solver opinions. This ensures GNN learns that solvers are final outputs.
+    """
     node_id = state.get("node_id")
+    
+    # Determine scope for this node
+    scope_id = _get_node_scope(state, node_id)
+    
+    # Get incoming knowledge (from nodes in same scope)
+    incoming_knowledge = _get_incoming_knowledge(state, node_id, scope_id)
+    
+    # Get problem text (from incoming nodes in scope, or original problem)
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
+    graph = state.get("graph_structure")
+    
+    # Check for Python_solver output to optionally include
+    python_output = None
+    if incoming_knowledge:
+        for inc_id, inc_data in incoming_knowledge.items():
+            inc_type = graph.get_node_type(inc_id) if graph else None
+            
+            # Check if Python_solver output is available
+            if inc_type == "Python_solver":
+                # Try to extract Python output
+                python_match = re.search(r'<PYTHON_OUTPUT>(.*?)</PYTHON_OUTPUT>', str(inc_data), re.DOTALL)
+                if python_match:
+                    python_output = python_match.group(1).strip()
+                    print(f"   💻 Using Python_solver output: {python_output[:50]}...")
+            
+            # If coming from decompose or split, use that as the problem
+            if inc_type in ["Decompose", "Split"]:
+                problem_text = str(inc_data)
+                break
+            else:
+                # Otherwise, use as context but keep original problem
+                problem_text = str(inc_data) if not problem_text else problem_text
+                break
     
     # Select model deterministically based on problem
     selected_model = select_model_deterministic(problem_text, SOLVER_MODELS)
-    print(f"\n🔧 Solver-{node_id}: Quick solution (model: {selected_model})")
+    print(f"\n🔧 Solver-{node_id}: Generating solution (model: {selected_model})")
+    print(f"   📍 Scope: {scope_id}")
+    if incoming_knowledge:
+        print(f"   📥 Knowledge from: {list(incoming_knowledge.keys())}")
     
     # SOLVER SPECIFIC PROMPT
     system_prompt = """You are an expert problem solver. Your task is to:
@@ -32,7 +142,13 @@ def solver_node(state: AgentState) -> dict:
         - Keep your answer concise (maximum 100 characters)
         - Output MUST be wrapped in XML tags"""
     
-    user_prompt = f"""Problem: {problem_text}
+    # Include Python output if available
+    context_text = ""
+    if python_output:
+        context_text = f"\n\nPython execution result: {python_output}\nUse this information to help solve the problem."
+    
+    user_prompt = f"""Problem: {problem_text}{context_text}
+
         Your answer MUST be in this exact format (max 100 characters inside tags):
         <SOLUTION>
         [Your answer here - just the final result]
@@ -49,8 +165,6 @@ def solver_node(state: AgentState) -> dict:
     try:
         response = call_llm(messages, model=selected_model, max_tokens=150)
         final_response = assistant_start + response
-        state['global_knowledge'].add(node_id, final_response)
-        print(f"   ✓ Response: {final_response[:80]}...")
         
         # PARSE <SOLUTION> TAG
         solution_match = re.search(r'<SOLUTION>(.*?)</SOLUTION>', final_response, re.DOTALL)
@@ -59,28 +173,67 @@ def solver_node(state: AgentState) -> dict:
             parsed_solution = solution_match.group(1).strip()
             print(f"   ✓ Parsed solution: {parsed_solution}")
             
-            # UPDATE STATE WITH PARSED SOLUTION
-            state['solution'] = parsed_solution
+            # ALWAYS save in structured format for Combine_all to collect
+            # Format: <SOLVER_OUTPUT>solution</SOLVER_OUTPUT>
+            structured_output = f"<SOLVER_OUTPUT>{parsed_solution}</SOLVER_OUTPUT>"
             
-            return {"solution": parsed_solution}
+            # Store in scoped knowledge (this is what Combine_all will collect)
+            _store_knowledge(state, node_id, scope_id, structured_output)
+            
+            # Only update global solution if we're in root scope (single solver path)
+            # Otherwise, Combine_all will set the final solution
+            if scope_id == "root" or not scope_id.startswith("root_"):
+                state['solution'] = parsed_solution
+                return {"solution": parsed_solution}
+            else:
+                # In decomposed/split scope - save structured output, let Combine_all merge
+                return {}
         else:
-            print(f"   ⚠️  No <SOLUTION> tag found in response")
+            print(f"   ⚠️  No <SOLUTION> tag found in response, storing raw response")
+            # Still store raw response for debugging
+            structured_output = f"<SOLVER_OUTPUT>{final_response}</SOLVER_OUTPUT>"
+            _store_knowledge(state, node_id, scope_id, structured_output)
             return {}
     
     except Exception as e:
         print(f"   ❌ Error: {e}")
-        state['global_knowledge'].add(node_id, f"Error: {str(e)}")
-        return {"result": [f"Error: {str(e)}"]}
+        error_output = f"<SOLVER_OUTPUT>ERROR: {str(e)}</SOLVER_OUTPUT>"
+        _store_knowledge(state, node_id, scope_id, error_output)
+        return {}
 
 
 def extract_topic_node(state: AgentState) -> dict:
     """Extract topic node - creates tree structure for hiring"""
     node_id = state.get("node_id")
+    
+    # Determine scope for this node
+    scope_id = _get_node_scope(state, node_id)
+    
+    # Get incoming knowledge (from nodes in same scope)
+    incoming_knowledge = _get_incoming_knowledge(state, node_id, scope_id)
+    
+    # Get problem text (from incoming nodes in scope, or original problem)
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
+    graph = state.get("graph_structure")
+    if incoming_knowledge:
+        # Use knowledge from incoming nodes if available (this could be a subproblem from decompose)
+        for inc_id, inc_data in incoming_knowledge.items():
+            inc_type = graph.get_node_type(inc_id) if graph else None
+            # If coming from decompose or split, use that as the problem
+            if inc_type in ["Decompose", "Split"]:
+                problem_text = str(inc_data)
+                break
+            else:
+                # Otherwise, use as context but keep original problem
+                problem_text = str(inc_data) if not problem_text else problem_text
+                break
     
     # Select model deterministically based on problem
     selected_model = select_model_deterministic(problem_text, EXTRACT_TOPIC_MODELS)
     print(f"\n📖 Extract_topic-{node_id}: Building topic tree (model: {selected_model})")
+    print(f"   📍 Scope: {scope_id}")
+    if incoming_knowledge:
+        print(f"   📥 Knowledge from: {list(incoming_knowledge.keys())}")
     
     # EXTRACT_TOPIC SPECIFIC PROMPT
     system_prompt = """You are an expert at identifying key information and creating hierarchical structures.
@@ -120,13 +273,15 @@ def extract_topic_node(state: AgentState) -> dict:
         response = call_llm(messages, model=selected_model, max_tokens=800)
         elapsed_time = time.time() - start_time
         final_response = assistant_start + response
-        state['global_knowledge'].add(node_id, final_response)
+        
+        # Store in scoped knowledge
+        _store_knowledge(state, node_id, scope_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")
         print(f"   ⏱️ Time taken: {elapsed_time:.2f} seconds")
         return {"result": [final_response]}
     except Exception as e:
         print(f"   ❌ Error: {e}")
-        state['global_knowledge'].add(node_id, f"Error: {str(e)}")
+        _store_knowledge(state, node_id, scope_id, f"Error: {str(e)}")
         return {"result": [f"Error: {str(e)}"]}
 
 
@@ -134,14 +289,18 @@ def validator_node(state: AgentState) -> dict:
     """Validator node - critical analysis, looks for counter-examples"""
     node_id = state.get("node_id")
     
-    # Get the most recent result from global knowledge to validate
-    # Try to find results from previous nodes
+    # Determine scope for this node
+    scope_id = _get_node_scope(state, node_id)
+    
+    # Get incoming knowledge (from nodes in same scope)
+    incoming_knowledge = _get_incoming_knowledge(state, node_id, scope_id)
+    
+    # Get the most recent result from incoming nodes to validate
     most_recent_result = None
-    for check_id in range(node_id - 1, -1, -1):
-        potential_result = state['global_knowledge'].get(check_id)
-        if potential_result:
-            most_recent_result = potential_result
-            break
+    if incoming_knowledge:
+        # Use knowledge from the most recent incoming node
+        for inc_id, inc_data in incoming_knowledge.items():
+            most_recent_result = str(inc_data)
     
     if not most_recent_result:
         most_recent_result = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
@@ -150,6 +309,9 @@ def validator_node(state: AgentState) -> dict:
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
     selected_model = select_model_deterministic(problem_text, VALIDATOR_MODELS)
     print(f"\n✓ Validator-{node_id}: Critical validation (model: {selected_model})")
+    print(f"   📍 Scope: {scope_id}")
+    if incoming_knowledge:
+        print(f"   📥 Knowledge from: {list(incoming_knowledge.keys())}")
     
     # VALIDATOR SPECIFIC PROMPT
     system_prompt = """You are a critical quality assurance expert. Your task is to:
@@ -187,58 +349,146 @@ def validator_node(state: AgentState) -> dict:
     try:
         response = call_llm(messages, model=selected_model, max_tokens=400)
         final_response = assistant_start + response
-        state['global_knowledge'].add(node_id, final_response)
+        
+        # Store in scoped knowledge
+        _store_knowledge(state, node_id, scope_id, final_response)
         print(f"   ✓ Response: {final_response[:80]}...")
         return {}
     except Exception as e:
         print(f"   ❌ Error: {e}")
-        state['global_knowledge'].add(node_id, f"Error: {str(e)}")
+        _store_knowledge(state, node_id, scope_id, f"Error: {str(e)}")
         return {"result": [f"Error: {str(e)}"]}
 
 
 def combine_all_node(state: AgentState, combine_all_edges: Dict) -> dict:
-    """Combine all node - synthesizes results from solver and validator"""
+    """Combine all node - collects all solver outputs and synthesizes final solution.
+    
+    This node:
+    1. Collects all SOLVER_OUTPUT from incoming nodes across all scopes
+    2. Extracts the actual solutions from structured format
+    3. Synthesizes them into a single final solution
+    4. Saves the final solution in parseable format
+    """
     node_id = state.get("node_id")
+    
+    # Combine_all typically merges results back to root scope
+    scope_id = "root"
+    
+    incoming = combine_all_edges.get(node_id, [])
+    
+    # Collect results from incoming nodes across ALL scopes
+    collected_results = {}
+    solver_solutions = []  # Extract all solver solutions for merging
+    scoped_knowledge = state.get("scoped_knowledge", {})
+    graph = state.get("graph_structure")
+    
+    for inc_id in incoming:
+        # Search across all scopes for this node's output
+        found = False
+        for scope, scope_knowledge in scoped_knowledge.items():
+            data = scope_knowledge.get(inc_id)
+            if data:
+                data_str = str(data)
+                collected_results[inc_id] = {
+                    "data": data_str[:500],
+                    "scope": scope
+                }
+                
+                # Extract solver solutions from structured format
+                # Look for <SOLVER_OUTPUT> tags
+                solver_match = re.search(r'<SOLVER_OUTPUT>(.*?)</SOLVER_OUTPUT>', data_str, re.DOTALL)
+                if solver_match:
+                    solution = solver_match.group(1).strip()
+                    inc_type = graph.get_node_type(inc_id) if graph else "unknown"
+                    solver_solutions.append({
+                        "node_id": inc_id,
+                        "node_type": inc_type,
+                        "solution": solution,
+                        "scope": scope
+                    })
+                    print(f"   ✓ Found solver solution from {inc_type}-{inc_id}: {solution[:50]}...")
+                
+                found = True
+                break
+        
+        if not found:
+            # Fallback to global_knowledge (legacy)
+            data = state.get("global_knowledge", {}).get(inc_id)
+            if data:
+                collected_results[inc_id] = {
+                    "data": str(data)[:500],
+                    "scope": "unknown"
+                }
     
     # Get original problem text for deterministic model selection
     problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
     selected_model = select_model_deterministic(problem_text, COMBINE_ALL_MODELS)
-    print(f"\n🔗 Combine_all-{node_id}: Synthesizing all results (model: {selected_model})")
+    print(f"\n🔗 Combine_all-{node_id}: Merging {len(solver_solutions)} solver solution(s) (model: {selected_model})")
+    print(f"   📍 Scope: {scope_id} (merged)")
+    if collected_results:
+        print(f"   📥 Combining from: {[(nid, info['scope']) for nid, info in collected_results.items()]}")
     
-    incoming = combine_all_edges.get(node_id, [])
-    
-    # Collect results from incoming nodes
-    collected_results = {}
-    for inc_id in incoming:
-        data = state['global_knowledge'].get(inc_id)
-        if data:
-            collected_results[inc_id] = str(data)[:500]
-    
-    results_text = "\n---\n".join([f"Node {nid}: {data}" for nid, data in collected_results.items()])
-    
-    # COMBINE_ALL SPECIFIC PROMPT
-    system_prompt = """You are an expert synthesizer and decision-maker. Your task is to:
-        1. Review all the provided results from different analysis nodes
-        2. Compare different perspectives and solutions
-        3. Synthesize findings into a FINAL VERDICT
-        4. Create a clear recommendation
-        5. Highlight any conflicts or important insights
+    # Build synthesis prompt
+    if solver_solutions:
+        # Focus on merging solver solutions
+        solutions_text = "\n---\n".join([
+            f"{sol['node_type']}-{sol['node_id']} (from scope '{sol['scope']}'): {sol['solution']}"
+            for sol in solver_solutions
+        ])
+        
+        system_prompt = """You are an expert synthesizer. Your task is to:
+            1. Review all the solver solutions provided
+            2. If they agree, confirm the common answer
+            3. If they differ, choose the most correct one or synthesize them
+            4. Output ONLY the final solution, nothing else
+            
+            Output MUST be in this exact format:
+            <FINAL_SOLUTION>
+            [Your final synthesized solution here]
+            </FINAL_SOLUTION>"""
+        
+        user_prompt = f"""Problem: {problem_text}
 
-        Be objective and create a clear final recommendation."""
-    
-    user_prompt = f"""Synthesis Request - Combine these results:
+            Here are {len(solver_solutions)} different solver solutions:
+            
+            {solutions_text}
+            
+            Synthesize these into ONE final solution. If solutions agree, use that answer.
+            If they differ, choose the best one or combine them appropriately.
+            
+            Output ONLY the final solution in this format:
+            <FINAL_SOLUTION>
+            [Final solution here]
+            </FINAL_SOLUTION>"""
+    else:
+        # Fallback: synthesize all collected results
+        results_text = "\n---\n".join([
+            f"Node {nid} (scope: {info['scope']}): {info['data']}" 
+            for nid, info in collected_results.items()
+        ])
+        
+        system_prompt = """You are an expert synthesizer and decision-maker. Your task is to:
+            1. Review all the provided results from different analysis nodes
+            2. Compare different perspectives and solutions
+            3. Synthesize findings into a FINAL VERDICT
+            4. Create a clear recommendation
+            5. Highlight any conflicts or important insights
 
-        {results_text}
+            Be objective and create a clear final recommendation."""
+        
+        user_prompt = f"""Synthesis Request - Combine these results:
 
-        Create a final synthesis:
-        <SYNTHESIS>
-        FINAL_VERDICT: [Summary of findings]
-        CONFIDENCE: [HIGH/MEDIUM/LOW]
-        KEY_FINDINGS: [Summary of key points]
-        RECOMMENDATION: [What to do based on results]
-        </SYNTHESIS>"""
+            {results_text}
+
+            Create a final synthesis:
+            <SYNTHESIS>
+            FINAL_VERDICT: [Summary of findings]
+            CONFIDENCE: [HIGH/MEDIUM/LOW]
+            KEY_FINDINGS: [Summary of key points]
+            RECOMMENDATION: [What to do based on results]
+            </SYNTHESIS>"""
     
-    assistant_start = "<SYNTHESIS>\n"
+    assistant_start = "<FINAL_SOLUTION>" if solver_solutions else "<SYNTHESIS>\n"
     
     messages = [
         {"role": "system", "content": system_prompt},
@@ -249,39 +499,244 @@ def combine_all_node(state: AgentState, combine_all_edges: Dict) -> dict:
     try:
         response = call_llm(messages, model=selected_model, max_tokens=500)
         final_response = assistant_start + response
-        state['global_knowledge'].add(node_id, final_response)
-        print(f"   ✓ Response: {final_response[:80]}...")
-        return {}
+        
+        # Parse final solution
+        if solver_solutions:
+            solution_match = re.search(r'<FINAL_SOLUTION>(.*?)</FINAL_SOLUTION>', final_response, re.DOTALL)
+            if solution_match:
+                final_solution = solution_match.group(1).strip()
+                print(f"   ✓ Final synthesized solution: {final_solution}")
+                
+                # Store in root scope and update global solution
+                structured_output = f"<SOLVER_OUTPUT>{final_solution}</SOLVER_OUTPUT>"
+                _store_knowledge(state, node_id, scope_id, structured_output)
+                
+                # Update global solution
+                state['solution'] = final_solution
+                return {"solution": final_solution}
+            else:
+                print(f"   ⚠️  Could not parse final solution, storing raw response")
+                _store_knowledge(state, node_id, scope_id, final_response)
+                return {}
+        else:
+            # Store synthesis
+            _store_knowledge(state, node_id, scope_id, final_response)
+            print(f"   ✓ Response: {final_response[:80]}...")
+            return {}
+            
     except Exception as e:
         print(f"   ❌ Error: {e}")
-        state['global_knowledge'].add(node_id, f"Error: {str(e)}")
+        _store_knowledge(state, node_id, scope_id, f"Error: {str(e)}")
         return {}
 
 
 def split_node(state: AgentState) -> dict:
-    """Split node - pass-through (does nothing)"""
+    """Split node - creates new scopes for each outgoing branch"""
     node_id = state.get("node_id")
-    print(f"\n✂️  Split-{node_id}: Pass-through")
+    scope_id = _get_node_scope(state, node_id)
+    
+    graph = state.get("graph_structure")
+    if not graph:
+        print(f"\n✂️  Split-{node_id}: No graph structure available")
+        return {}
+    
+    # Get outgoing edges from this split node
+    outgoing_nodes = graph.get_outgoing_nodes(node_id)
+    
+    # Create new scopes for each outgoing branch
+    scope_mapping = state.get("scope_mapping", {})
+    scoped_knowledge = state.get("scoped_knowledge", {})
+    
+    new_scopes = {}
+    for i, target_node_id in enumerate(outgoing_nodes):
+        new_scope_id = f"{scope_id}_split_{i+1}"
+        new_scopes[target_node_id] = new_scope_id
+        scope_mapping[target_node_id] = new_scope_id
+        
+        # Initialize empty knowledge for new scope
+        if new_scope_id not in scoped_knowledge:
+            from evaluation.agent_state import ScopedKnowledge
+            scoped_knowledge[new_scope_id] = ScopedKnowledge(scope_id=new_scope_id)
+    
+    state["scope_mapping"] = scope_mapping
+    state["scoped_knowledge"] = scoped_knowledge
+    
+    print(f"\n✂️  Split-{node_id}: Creating {len(new_scopes)} new scopes")
+    print(f"   📍 Scope: {scope_id}")
+    print(f"   🆕 New scopes: {new_scopes}")
+    
+    # Store split information in current scope
+    _store_knowledge(state, node_id, scope_id, f"Split into {len(new_scopes)} branches: {list(new_scopes.values())}")
+    
     return {}
 
 
 def python_solver_node(state: AgentState) -> dict:
     """Python solver node - pass-through (does nothing)"""
     node_id = state.get("node_id")
+    scope_id = _get_node_scope(state, node_id)
+    incoming_knowledge = _get_incoming_knowledge(state, node_id, scope_id)
+    
     print(f"\n🐍 Python_solver-{node_id}: Pass-through")
+    print(f"   📍 Scope: {scope_id}")
+    if incoming_knowledge:
+        print(f"   📥 Knowledge from: {list(incoming_knowledge.keys())}")
+    
+    # Pass through incoming knowledge
+    if incoming_knowledge:
+        for inc_id, inc_data in incoming_knowledge.items():
+            _store_knowledge(state, node_id, scope_id, inc_data)
+            break
+    
     return {}
 
 
 def decompose_node(state: AgentState) -> dict:
-    """Decompose node - pass-through (does nothing)"""
+    """Decompose node - decomposes problem into subproblems, each child solves a different part"""
     node_id = state.get("node_id")
-    print(f"\n📋 Decompose-{node_id}: Pass-through")
-    return {}
+    scope_id = _get_node_scope(state, node_id)
+    incoming_knowledge = _get_incoming_knowledge(state, node_id, scope_id)
+    
+    # Get the problem to decompose
+    problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
+    if incoming_knowledge:
+        for inc_id, inc_data in incoming_knowledge.items():
+            problem_text = str(inc_data) if not problem_text else problem_text
+            break
+    
+    # Get graph structure to find outgoing nodes
+    graph = state.get("graph_structure")
+    if not graph:
+        print(f"\n📋 Decompose-{node_id}: No graph structure available")
+        return {}
+    
+    outgoing_nodes = graph.get_outgoing_nodes(node_id)
+    
+    print(f"\n📋 Decompose-{node_id}: Decomposing problem into {len(outgoing_nodes)} subproblems")
+    print(f"   📍 Scope: {scope_id}")
+    if incoming_knowledge:
+        print(f"   📥 Knowledge from: {list(incoming_knowledge.keys())}")
+    
+    # Decompose the problem into subproblems using LLM
+    selected_model = select_model_deterministic(problem_text, EXTRACT_TOPIC_MODELS)
+    
+    system_prompt = """You are an expert at breaking down complex problems into smaller, independent subproblems.
+        Your task is to decompose a problem into N distinct subproblems, where each subproblem:
+        - Is a self-contained part of the original problem
+        - Can be solved independently
+        - Contributes to solving the overall problem when combined
+        
+        Output the decomposition in a structured format."""
+    
+    user_prompt = f"""Original Problem: {problem_text}
+
+        Break this problem into {len(outgoing_nodes)} distinct subproblems.
+        Each subproblem should be a specific, independent task that contributes to solving the overall problem.
+        
+        Format:
+        <DECOMPOSITION>
+        SUBPROBLEM_1: [First subproblem description]
+        SUBPROBLEM_2: [Second subproblem description]
+        ...
+        SUBPROBLEM_{len(outgoing_nodes)}: [Last subproblem description]
+        </DECOMPOSITION>"""
+    
+    assistant_start = "<DECOMPOSITION>\n"
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+        {"role": "assistant", "content": assistant_start}
+    ]
+    
+    try:
+        response = call_llm(messages, model=selected_model, max_tokens=800)
+        decomposition_response = assistant_start + response
+        
+        # Parse subproblems
+        subproblems = []
+        for i in range(1, len(outgoing_nodes) + 1):
+            pattern = rf'SUBPROBLEM_{i}:\s*(.+?)(?=SUBPROBLEM_|</DECOMPOSITION>|$)'
+            match = re.search(pattern, decomposition_response, re.DOTALL | re.IGNORECASE)
+            if match:
+                subproblems.append(match.group(1).strip())
+            else:
+                # Fallback: create generic subproblem
+                subproblems.append(f"Subproblem {i}: Part {i} of the original problem")
+        
+        # Create new scopes for each subproblem (similar to split, but with different semantics)
+        scope_mapping = state.get("scope_mapping", {})
+        scoped_knowledge = state.get("scoped_knowledge", {})
+        
+        new_scopes = {}
+        for i, target_node_id in enumerate(outgoing_nodes):
+            new_scope_id = f"{scope_id}_decomp_{i+1}"
+            new_scopes[target_node_id] = new_scope_id
+            scope_mapping[target_node_id] = new_scope_id
+            
+            # Initialize knowledge for new scope with the specific subproblem
+            if new_scope_id not in scoped_knowledge:
+                from evaluation.agent_state import ScopedKnowledge
+                scoped_knowledge[new_scope_id] = ScopedKnowledge(scope_id=new_scope_id)
+            
+            # Store the subproblem in the scope (nodes in this scope will see it)
+            scoped_knowledge[new_scope_id].add(node_id, subproblems[i] if i < len(subproblems) else f"Subproblem {i+1}")
+        
+        state["scope_mapping"] = scope_mapping
+        state["scoped_knowledge"] = scoped_knowledge
+        
+        print(f"   🆕 Created {len(new_scopes)} subproblem scopes:")
+        for target_id, scope in new_scopes.items():
+            subproblem = subproblems[list(new_scopes.keys()).index(target_id)] if list(new_scopes.keys()).index(target_id) < len(subproblems) else "Unknown"
+            print(f"      Node {target_id} → scope '{scope}': {subproblem[:60]}...")
+        
+        # Store the full decomposition in the current scope
+        _store_knowledge(state, node_id, scope_id, decomposition_response)
+        
+        return {}
+    
+    except Exception as e:
+        print(f"   ❌ Error: {e}")
+        # Fallback: create simple subproblems
+        scope_mapping = state.get("scope_mapping", {})
+        scoped_knowledge = state.get("scoped_knowledge", {})
+        
+        for i, target_node_id in enumerate(outgoing_nodes):
+            new_scope_id = f"{scope_id}_decomp_{i+1}"
+            scope_mapping[target_node_id] = new_scope_id
+            if new_scope_id not in scoped_knowledge:
+                from evaluation.agent_state import ScopedKnowledge
+                scoped_knowledge[new_scope_id] = ScopedKnowledge(scope_id=new_scope_id)
+            scoped_knowledge[new_scope_id].add(node_id, f"Subproblem {i+1}: {problem_text}")
+        
+        state["scope_mapping"] = scope_mapping
+        state["scoped_knowledge"] = scoped_knowledge
+        _store_knowledge(state, node_id, scope_id, f"Error decomposing: {str(e)}")
+        
+        return {}
 
 
 def explain_node(state: AgentState) -> dict:
-    """Explain node - pass-through (does nothing)"""
+    """Explain node - provides explanation"""
     node_id = state.get("node_id")
-    print(f"\n📖 Explain-{node_id}: Pass-through")
+    scope_id = _get_node_scope(state, node_id)
+    incoming_knowledge = _get_incoming_knowledge(state, node_id, scope_id)
+    
+    print(f"\n📖 Explain-{node_id}: Providing explanation")
+    print(f"   📍 Scope: {scope_id}")
+    if incoming_knowledge:
+        print(f"   📥 Knowledge from: {list(incoming_knowledge.keys())}")
+    
+    # Get knowledge to explain
+    explanation_text = ""
+    if incoming_knowledge:
+        for inc_id, inc_data in incoming_knowledge.items():
+            explanation_text = str(inc_data)
+            break
+    
+    # Store explanation (simulated response)
+    explanation = f"Explanation: {explanation_text[:100]}..."
+    _store_knowledge(state, node_id, scope_id, explanation)
+    
     return {}
 

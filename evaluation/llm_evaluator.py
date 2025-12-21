@@ -110,9 +110,14 @@ def evaluate_selected_graphs(
                 logger.debug(f"\n  [{prob_idx + 1}/{num_problems_to_eval}] Category: {category}")
                 
                 # Build initial state
+                from evaluation.agent_state import ScopedKnowledge
                 initial_state: AgentState = {
                     "problem": [problem],
                     "global_knowledge": GlobalKnowledge(),
+                    "graph_structure": None,  # Will be set by graph builder
+                    "scoped_knowledge": {"root": ScopedKnowledge(scope_id="root")},
+                    "scope_mapping": {},
+                    "current_scope": "root",
                     "result": [],
                     "node_type": None,
                     "node_id": None,
