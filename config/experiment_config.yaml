@@ -42,7 +42,7 @@ local_llm_model: TinyLlama/TinyLlama-1.1B-Chat-v1.0  # ~0.5-1 sec/call, decent f
 local_llm_device: auto  # Options: "auto" (detects CUDA/MPS), "cuda", "mps" (Apple Silicon), "cpu"
 
 # Pipeline Control
-max_iterations: 40
+max_iterations: 100
 checkpoint_frequency: 5
 
 # Paths
@@ -51,5 +51,5 @@ log_dir: ./logs
 data_dir: ./data
 
 # Experiment Info
-experiment_name: gnn_multiagent_opt_v1
+experiment_name: more-iterations-simulate-llm
 seed: 42

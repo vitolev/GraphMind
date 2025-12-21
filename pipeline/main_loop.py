@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from config.settings import Config
 import numpy as np
+import pandas as pd
 from typing import Any, Dict, List
 from data_management.graph_storage import GraphSet
 
@@ -20,6 +21,81 @@ class PipelineState:
     def __post_init__(self):
         if self.iteration_history is None:
             self.iteration_history = []
+
+
+def _save_iteration_metrics(
+    metrics: Dict[str, Any],
+    iteration_num: int,
+    config: Config,
+    logger: logging.Logger
+) -> Path:
+    """
+    Save raw metrics data for a single iteration to CSV, appending to cumulative file.
+    
+    Saves to: logs/analytics/{experiment_name}/all_iterations_data.csv
+    Creates/updates a single CSV file with all iterations for easy post-processing.
+    """
+    # Create directory structure
+    experiment_dir = config.analytics_dir / config.experiment_name
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Flatten the metrics dictionary for CSV
+    # Convert nested dicts to flat structure with appropriate column names
+    flat_metrics = {}
+    
+    for key, value in metrics.items():
+        if isinstance(value, dict):
+            # Flatten nested dictionaries with prefix
+            for nested_key, nested_value in value.items():
+                flat_key = f"{key}_{nested_key}"
+                
+                # Skip per_graph_metrics (too large, can be saved separately if needed)
+                if nested_key == 'per_graph_metrics' and isinstance(nested_value, list):
+                    flat_metrics[f"{flat_key}_count"] = len(nested_value)
+                    continue
+                
+                if isinstance(nested_value, dict):
+                    # Double nested dict - flatten further
+                    for sub_key, sub_value in nested_value.items():
+                        double_flat_key = f"{flat_key}_{sub_key}"
+                        flat_metrics[double_flat_key] = sub_value
+                elif isinstance(nested_value, (list, tuple)):
+                    # Store list as string representation or count
+                    if len(nested_value) > 0 and isinstance(nested_value[0], dict):
+                        flat_metrics[f"{flat_key}_count"] = len(nested_value)
+                    else:
+                        # Convert list/tuple to string for CSV
+                        flat_metrics[flat_key] = str(nested_value) if nested_value else ""
+                else:
+                    flat_metrics[flat_key] = nested_value
+        elif isinstance(value, (list, tuple)) and len(value) > 0 and isinstance(value[0], dict):
+            # If it's a list of dicts, just store count
+            flat_metrics[f"{key}_count"] = len(value)
+        elif isinstance(value, datetime):
+            # Convert datetime to string
+            flat_metrics[key] = value.isoformat()
+        else:
+            flat_metrics[key] = value
+    
+    # Create DataFrame with single row
+    new_row_df = pd.DataFrame([flat_metrics])
+    
+    # Path to cumulative CSV file
+    csv_path = experiment_dir / "all_iterations_data.csv"
+    
+    # Append to existing file or create new one
+    if csv_path.exists():
+        # Read existing data and append
+        existing_df = pd.read_csv(csv_path)
+        combined_df = pd.concat([existing_df, new_row_df], ignore_index=True)
+        combined_df.to_csv(csv_path, index=False)
+    else:
+        # Create new file
+        new_row_df.to_csv(csv_path, index=False)
+    
+    logger.debug(f"Saved iteration {iteration_num} metrics to cumulative file: {csv_path}")
+    
+    return csv_path
 
 def run_pipeline(config: Config, logger: logging.Logger) -> None:    
     from gnn_models.model_manager import initialize_gnn_model, retrain_gnn_model
@@ -72,6 +148,10 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
             logger.info(f"  - Iteration time: {iteration_time:.2f}s")
             
             state.iteration_history.append(metrics)
+            
+            # Save raw metrics data for this iteration to CSV
+            csv_path = _save_iteration_metrics(metrics, iteration_num, config, logger)
+            logger.info(f"  💾 Saved iteration metrics to: {csv_path}")
                 
         except Exception as e:
             logger.error(f"Error in iteration {iteration_num}: {e}", exc_info=True)

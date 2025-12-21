@@ -10,9 +10,11 @@ def run_analytics(metrics_df: pd.DataFrame, config: Config, logger: logging.Logg
     Run post-processing analysis based on config settings.
     
     Creates subdirectories and files based on what's enabled in config.
+    All outputs are saved to logs/analytics/{experiment_name}/ folder.
     """
     
-    analytics_dir = config.analytics_dir
+    # Use experiment-specific directory for all analytics outputs
+    analytics_dir = config.analytics_dir / config.experiment_name
     analytics_dir.mkdir(parents=True, exist_ok=True)
     
     logger.info(f"Analytics output directory: {analytics_dir}")
