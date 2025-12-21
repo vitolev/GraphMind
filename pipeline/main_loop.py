@@ -139,7 +139,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
         logger.info(f"{'='*60}")
         
         try:
-            metrics = run_single_iteration(
+            metrics, model = run_single_iteration(
                 iteration_num, config, logger, state, 
                 model, good_graphs_set, training_dataset, math_problems
             )
@@ -223,7 +223,7 @@ def run_single_iteration(
     
     retrain_loss = None
     logger.info(f"\n[Step 6/6] Retraining GNN models...")
-    metrics6, model = retrain_gnn_model(config, logger, model, training_dataset) # Correct this to be the right data
+    metrics6, model = retrain_gnn_model(config, logger, training_dataset) # Correct this to be the right data
     logger.info(f"  ✅ GNN retrained")
 
     iteration_metrics = {
@@ -238,4 +238,4 @@ def run_single_iteration(
         'loop': {} 
     }
     
-    return iteration_metrics
+    return iteration_metrics, model

@@ -96,13 +96,14 @@ def predict_batch_performance(
 def retrain_gnn_model(
     config: Config,
     logger: logging.Logger,
-    model: Any,
     training_dataset: GraphSet
 ) -> Any:
     
     logger.info("Retraining GNN model")
     logger.info(f"  - Training samples: {training_dataset.size()}")
     logger.info(f"  - Learning rate: {config.gnn_learning_rate}")
+
+    model = initialize_gnn_model(config, logger)
     
     if training_dataset.size() == 0:
         logger.warning("No training data, skipping retrain")

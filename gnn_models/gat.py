@@ -52,12 +52,12 @@ class GATNet(torch.nn.Module):
             x = F.elu(gat(x, edge_index))
 
         # Graph-level representation via super node
-        super_indices = data.super_node_idx.to(self.device)
+        super_indices = data.ptr[1:] - 1
         super_embeddings = x[super_indices]  
 
         # Final prediction
         score = self.mlp(super_embeddings)
-        return score.squeeze() 
+        return score.squeeze(-1) 
 
     @torch.no_grad()
     def predict(self, data_list: List[Data]) -> List[float]:
@@ -67,11 +67,13 @@ class GATNet(torch.nn.Module):
             import random
             return [random.random() for _ in data_list]
 
-        preds = []
-        for data in data_list:
-            data = data.to(self.device)
-            pred = self(data).item()
-            preds.append(pred)
+        loader = DataLoader(data_list, batch_size=len(data_list), shuffle=False) 
+        preds = [] 
+        for _, batch in enumerate(loader): 
+            batch = batch.to(self.device) 
+            batch_pred = self(batch) 
+            preds.extend(batch_pred.cpu().tolist())
+            
         return preds
 
     def fit(self, dataset: List[Data]):
