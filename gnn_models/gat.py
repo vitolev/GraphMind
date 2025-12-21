@@ -38,8 +38,6 @@ class GATNet(torch.nn.Module):
 
         # MLP to map last-node embedding to scalar [0–1]
         self.mlp = torch.nn.Sequential(
-            torch.nn.Linear(hidden_dim, hidden_dim),
-            torch.nn.ReLU(),
             torch.nn.Linear(hidden_dim, 1),
             torch.nn.Sigmoid()  # output in [0,1]
         )

@@ -39,8 +39,6 @@ class SAGENet(torch.nn.Module):
 
         # MLP graph-level head
         self.mlp = torch.nn.Sequential(
-            torch.nn.Linear(hidden_dim, hidden_dim),
-            torch.nn.ReLU(),
             torch.nn.Linear(hidden_dim, 1),
             torch.nn.Sigmoid()
         )

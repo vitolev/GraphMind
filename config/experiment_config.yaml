@@ -8,13 +8,13 @@ gnn_model_type: gcn
 data_format: Data
 
 # GNN Configuration
-gnn_hidden_dim: 64
-gnn_num_layers: 3
-gnn_num_heads: 8
+gnn_hidden_dim: 16
+gnn_num_layers: 2
+gnn_num_heads: 4
 gnn_dropout: 0.1
 gnn_learning_rate: 0.001
 gnn_batch_size: 32
-gnn_epochs: 200
+gnn_epochs: 100
 gnn_device: cuda
 
 # Selection Strategy
@@ -42,7 +42,7 @@ local_llm_model: TinyLlama/TinyLlama-1.1B-Chat-v1.0  # ~0.5-1 sec/call, decent f
 local_llm_device: auto  # Options: "auto" (detects CUDA/MPS), "cuda", "mps" (Apple Silicon), "cpu"
 
 # Pipeline Control
-max_iterations: 100
+max_iterations: 50
 checkpoint_frequency: 5
 
 # Paths

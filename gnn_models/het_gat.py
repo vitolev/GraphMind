@@ -55,9 +55,7 @@ class HetGATNet(torch.nn.Module):
 
         # Final MLP to scalar per graph
         self.mlp = torch.nn.Sequential(
-            torch.nn.Linear(self.hidden_dim * self.heads, self.hidden_dim),
-            torch.nn.ReLU(),
-            torch.nn.Linear(self.hidden_dim, 1),
+            torch.nn.Linear(self.hidden_dim * self.heads, 1),
             torch.nn.Sigmoid()
         )
 
