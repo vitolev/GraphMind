@@ -1,8 +1,8 @@
 # Graph Generation
-num_graphs_per_iteration: 100000
+num_graphs_per_iteration: 200000
 generation_strategy: random
-max_nodes: 7
-max_depth: 2
+max_nodes: 8
+max_depth: 3
 
 gnn_model_type: gcn
 data_format: Data
@@ -18,11 +18,11 @@ gnn_epochs: 200
 gnn_device: cuda
 
 # Selection Strategy
-top_k_to_keep: 20 # Number of graphs to keep after each iteration should be smaller in starting sets
-eval_k_best: 4 # Number of graphs to evaluate after each iteration
+top_k_to_keep: 25 # Number of graphs to keep after each iteration should be smaller in starting sets
+eval_k_best: 10 # Number of graphs to evaluate after each iteration
 
 # Evaluation
-num_eval_problems: 4
+num_eval_problems: 10
 eval_timeout_seconds: 30
 #llm_model: gpt-4
 
@@ -41,7 +41,7 @@ local_llm_model: TinyLlama/TinyLlama-1.1B-Chat-v1.0  # ~0.5-1 sec/call, decent f
 local_llm_device: auto  # Options: "auto" (detects CUDA/MPS), "cuda", "mps" (Apple Silicon), "cpu"
 
 # Pipeline Control
-max_iterations: 10
+max_iterations: 40
 checkpoint_frequency: 5
 
 # Paths

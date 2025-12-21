@@ -151,11 +151,14 @@ def initialize_groq_clients():
 def get_next_available_client_and_model(model_pool: List[str], current_model: str = None):
     """Get the next available Groq client and model.
     
-    Priority: Keep the same model for the agent type, only switch models if necessary.
+    Strategy:
+    1. Always use the same model for an agent type (first model in pool)
+    2. When switching API keys, keep the same model
+    3. Only switch models when returning to an API key that was rate-limited with that model
     
     Args:
-        model_pool: List of available models for this agent type
-        current_model: Preferred model to use (priority is to keep this model)
+        model_pool: List of available models for this agent type (should have one model for now)
+        current_model: Preferred model to use (should match agent type's model)
     
     Returns:
         Tuple of (Groq client, model name), or (None, None) if no clients available
@@ -167,6 +170,16 @@ def get_next_available_client_and_model(model_pool: List[str], current_model: st
     if len(_groq_clients) == 0:
         return None, None
     
+    # Get the primary model for this agent type (first model in pool)
+    primary_model = model_pool[0] if model_pool else None
+    if not primary_model:
+        raise ValueError("Model pool is empty")
+    
+    # Use primary model (or current_model if it matches)
+    model_to_use = primary_model
+    if current_model and current_model in model_pool:
+        model_to_use = current_model
+    
     # Filter out rate-limited API keys
     available_indices = [i for i in range(len(_groq_clients)) if i not in _rate_limited_api_keys]
     
@@ -176,48 +189,35 @@ def get_next_available_client_and_model(model_pool: List[str], current_model: st
         _rate_limited_api_keys.clear()
         available_indices = list(range(len(_groq_clients)))
     
-    # Priority 1: Try to use the same model (current_model) with a different API key
-    if current_model and current_model in model_pool:
-        # Find an API key that hasn't been rate-limited with this model
-        for idx in available_indices:
-            if not is_model_rate_limited(current_model, idx):
-                # This API key is available and this model works on it
-                _current_client_index = idx
-                client = _groq_clients[_current_client_index]
-                _api_key_last_model[_current_client_index] = current_model
-                return client, current_model
-        
-        # If we get here, all API keys are rate-limited with this model
-        # Fall through to try a different model
+    # Priority 1: Try to use the primary model with an API key that hasn't been rate-limited
+    # Prefer API keys that haven't been rate-limited with this model
+    for idx in available_indices:
+        if not is_model_rate_limited(model_to_use, idx):
+            # This API key is available and this model works on it
+            _current_client_index = idx
+            client = _groq_clients[_current_client_index]
+            _api_key_last_model[_current_client_index] = model_to_use
+            return client, model_to_use
     
-    # Priority 2: If preferred model not available, rotate to next API key and use first available model
-    # Rotate to next available API key
-    if _current_client_index not in available_indices:
-        _current_client_index = available_indices[0]
+    # Priority 2: All preferred API keys are rate-limited with the primary model
+    # Rotate to next API key (try ones that were rate-limited - they might have reset)
+    # When we come back to an API key, we'll try the same model again
+    # Only switch models if it fails again (handled in call_groq_with_retry)
+    
+    # Rotate to next API key
+    all_indices = list(range(len(_groq_clients)))
+    if _current_client_index in all_indices:
+        current_pos = all_indices.index(_current_client_index)
+        _current_client_index = all_indices[(current_pos + 1) % len(all_indices)]
     else:
-        # Find next available API key after current
-        current_pos = available_indices.index(_current_client_index)
-        _current_client_index = available_indices[(current_pos + 1) % len(available_indices)]
+        _current_client_index = all_indices[0]
     
     client = _groq_clients[_current_client_index]
     
-    # Select model: prefer first model in pool, or next model if this API key used a different one before
-    last_model = _api_key_last_model.get(_current_client_index)
-    if last_model and last_model in model_pool and len(model_pool) > 1:
-        # This API key used a different model before, try next one
-        try:
-            last_index = model_pool.index(last_model)
-            model_index = (last_index + 1) % len(model_pool)
-        except ValueError:
-            model_index = 0
-    else:
-        # Use first model in pool (or preferred model if it's first)
-        if current_model and current_model in model_pool:
-            model_index = model_pool.index(current_model)
-        else:
-            model_index = 0
-    
-    selected_model = model_pool[model_index]
+    # Always use the primary model when coming back to an API key
+    # The rate limit might have reset, so we try again with the same model
+    # If it fails again, call_groq_with_retry will handle it and can switch models
+    selected_model = model_to_use
     _api_key_last_model[_current_client_index] = selected_model
     
     return client, selected_model

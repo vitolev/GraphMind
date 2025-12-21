@@ -28,6 +28,12 @@ def mark_model_rate_limited(model: str, api_key_index: int = None):
             _rate_limited_model_key_combos.add((i, model))
 
 
+def unmark_model_rate_limited(model: str, api_key_index: int):
+    """Unmark a model as rate-limited for a specific API key (rate limit likely reset)"""
+    global _rate_limited_model_key_combos
+    _rate_limited_model_key_combos.discard((api_key_index, model))
+
+
 def is_model_rate_limited(model: str, api_key_index: int = None) -> bool:
     """Check if a model is rate-limited for a specific API key (or any key if api_key_index is None)"""
     if api_key_index is not None:
@@ -39,28 +45,26 @@ def is_model_rate_limited(model: str, api_key_index: int = None) -> bool:
 
 
 # Solver models - good for problem-solving tasks (prioritize 14.4K RPD models)
+# Using single model per agent type, each agent type gets a unique model
 SOLVER_MODELS = [
-    "llama-3.1-8b-instant",                    # Fast, good quality, 30 RPM, 14.4K RPD, 6K TPM
-    "allam-2-7b",                              # Good quality, 30 RPM, 14.4K RPD, 6K TPM
+    "llama-3.1-8b-instant",                    # Fast, good quality, 30 RPM, 14.4K RPD, 6K TPM, 500K TPD
 ]
 
 # Extract topic models - good for analysis/understanding tasks (needs 800 tokens, so models must support >= 800)
-# Only models with 14.4K RPD
+# Using different model from Solver (must support 800+ tokens)
 EXTRACT_TOPIC_MODELS = [
-    "llama-3.1-8b-instant",                    # Fast, good quality, 30 RPM, 14.4K RPD, supports 800+ tokens
-    "allam-2-7b",                              # Good quality, 30 RPM, 14.4K RPD, supports 800+ tokens
+    "meta-llama/llama-guard-4-12b",            # Guard model, 30 RPM, 14.4K RPD, 15K TPM, 500K TPD - supports 800+ tokens
 ]
 
-# Validator models - good for validation/critical analysis (14.4K RPD models)
+# Validator models - good for validation/critical analysis (using different model)
+# Note: Guard models are designed for content moderation, but can work for validation tasks
 VALIDATOR_MODELS = [
-    "llama-3.1-8b-instant",                    # Fast, good quality, 30 RPM, 14.4K RPD
-    "allam-2-7b",                              # Good quality, 30 RPM, 14.4K RPD
+    "meta-llama/llama-prompt-guard-2-22m",     # Guard model, 30 RPM, 14.4K RPD, 15K TPM, 500K TPD - smaller, fast
 ]
 
-# Combine all models - good for synthesis tasks (14.4K RPD models)
+# Combine all models - good for synthesis tasks (using different model)
 COMBINE_ALL_MODELS = [
-    "llama-3.1-8b-instant",                    # Fast, good quality, 30 RPM, 14.4K RPD
-    "allam-2-7b",                              # Good quality, 30 RPM, 14.4K RPD
+    "meta-llama/llama-prompt-guard-2-86m",     # Guard model, 30 RPM, 14.4K RPD, 15K TPM, 500K TPD - note: 512 token limit
 ]
 
 

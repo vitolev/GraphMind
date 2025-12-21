@@ -24,6 +24,7 @@ from evaluation.model_selection import (
     VALIDATOR_MODELS,
     COMBINE_ALL_MODELS,
     mark_model_rate_limited,
+    unmark_model_rate_limited,
     is_model_rate_limited,
 )
 
@@ -237,30 +238,41 @@ def call_groq_with_retry(messages: List[Dict], model: str = "llama-3.1-8b-instan
                 model=selected_model,
                 max_completion_tokens=max_tokens,
             )
+            # Success! If this API key was previously rate-limited with this model, unmark it
+            # (the rate limit likely reset while we were using other API keys)
+            unmark_model_rate_limited(selected_model, current_api_key_index)
             return chat_completion.choices[0].message.content
         except Exception as e:
             error_msg = str(e).lower()
             if 'rate limit' in error_msg or '429' in error_msg:
+                # Check if we're coming back to an API key that was already rate-limited with this model
+                was_already_rate_limited = is_model_rate_limited(selected_model, current_api_key_index)
+                
                 # Mark this specific API key + model combination as rate-limited
                 mark_model_rate_limited(selected_model, current_api_key_index)
                 
-                # Check if this model is rate-limited on all API keys
-                if is_model_rate_limited(selected_model):
-                    # Model is rate-limited everywhere, mark API key as rate-limited and try different model
-                    mark_api_key_rate_limited(current_api_key_index)
-                    print(f"      ⏳ Rate limited on API key {current_api_key_index + 1} with model {selected_model}. Model rate-limited on all keys, switching API key and model...")
+                # If this is the second failure on this API key (was already rate-limited),
+                # and we have alternative models, switch to a different model
+                if was_already_rate_limited and len(model_pool) > 1:
+                    # This API key is still rate-limited after we came back to it
+                    # Switch to a different model from the pool
+                    try:
+                        current_index = model_pool.index(selected_model)
+                        next_index = (current_index + 1) % len(model_pool)
+                        current_model = model_pool[next_index]
+                        print(f"      🔄 API key {current_api_key_index + 1} still rate-limited with {selected_model} on second try, switching to {current_model}")
+                    except ValueError:
+                        pass  # Keep current_model as selected_model
                 elif len(llm_providers._groq_clients) > 1:
-                    # Model still available on other API keys, just switch API key (keep same model)
+                    # First time rate-limited on this API key, just switch API key (keep same model)
                     mark_api_key_rate_limited(current_api_key_index)
                     print(f"      ⏳ Rate limited on API key {current_api_key_index + 1} with model {selected_model}. Switching to next API key (keeping same model)...")
                 else:
-                    # Only one API key, wait and retry with different model
+                    # Only one API key, wait and retry
                     mark_api_key_rate_limited(current_api_key_index)
                     wait_time = retry_delay * (2 ** attempt)
                     print(f"      ⏳ Rate limited on {selected_model}. Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
-                    # Try different model on next attempt
-                    current_model = selected_model
             elif 'invalid_request_error' in error_msg or '400' in error_msg:
                 if len(messages) > 1:
                     combined_text = ""
