@@ -180,14 +180,10 @@ def solver_node(state: AgentState) -> dict:
             # Store in scoped knowledge (this is what Combine_all will collect)
             _store_knowledge(state, node_id, scope_id, structured_output)
             
-            # Only update global solution if we're in root scope (single solver path)
-            # Otherwise, Combine_all will set the final solution
-            if scope_id == "root" or not scope_id.startswith("root_"):
-                state['solution'] = parsed_solution
-                return {"solution": parsed_solution}
-            else:
-                # In decomposed/split scope - save structured output, let Combine_all merge
-                return {}
+            # NEVER directly set state['solution'] here to avoid conflicts when multiple solvers run in parallel
+            # Only Combine_all should set the final solution, or we'll extract it from scoped knowledge if no Combine_all exists
+            # This prevents LangGraph errors: "Can receive only one value per step"
+            return {}
         else:
             print(f"   ⚠️  No <SOLUTION> tag found in response, storing raw response")
             # Still store raw response for debugging
