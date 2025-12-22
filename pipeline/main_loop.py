@@ -114,7 +114,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     if state.training_dataset_size > 0:
         logger.info(f"{'='*60}")
         logger.info(f"Initial training dataset exists. Training the initial model...")
-        _, model = retrain_gnn_model(config, logger, model, training_dataset)
+        _, model = retrain_gnn_model(config, logger, training_dataset)
         logger.info(f"Model retrained on existing training data ({state.training_dataset_size} samples).")
         logger.info(f"{'='*60}")
     

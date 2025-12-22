@@ -68,7 +68,7 @@ class SAGENet(torch.nn.Module):
         if not self.is_trained:
             self.logger.warning("Model not trained yet, returning random predictions.")
             import random
-            return [random.random() for _ in data_list]
+            return [random.random() * 0.5 for _ in data_list]
 
         loader = DataLoader(data_list, batch_size=len(data_list), shuffle=False) 
         preds = [] 
