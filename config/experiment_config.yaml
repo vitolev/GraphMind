@@ -14,7 +14,7 @@ gnn_num_heads: 4
 gnn_dropout: 0.1
 gnn_learning_rate: 0.001
 gnn_batch_size: 32
-gnn_epochs: 100
+gnn_epochs: 150
 gnn_device: cuda
 
 # Selection Strategy
@@ -42,7 +42,7 @@ local_llm_model: TinyLlama/TinyLlama-1.1B-Chat-v1.0  # ~0.5-1 sec/call, decent f
 local_llm_device: auto  # Options: "auto" (detects CUDA/MPS), "cuda", "mps" (Apple Silicon), "cpu"
 
 # Pipeline Control
-max_iterations: 15
+max_iterations: 25
 checkpoint_frequency: 5
 
 # Paths
@@ -51,5 +51,5 @@ log_dir: ./logs
 data_dir: ./data
 
 # Experiment Info
-experiment_name: more-agents-real-llm
+experiment_name: more-agents-real-llm-v3
 seed: 42

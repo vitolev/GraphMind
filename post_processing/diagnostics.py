@@ -278,6 +278,165 @@ def visualize_best_graphs(
     return saved_paths
 
 
+def visualize_rmse_trends(
+    config: Config,
+    output_dir: Path,
+    logger: logging.Logger
+) -> Path:
+    """
+    Visualize RMSE trends over iterations from all_iterations_data.csv.
+    Creates blog-post ready visualizations showing how RMSE decreases over time.
+    
+    Args:
+        config: Configuration object
+        output_dir: Directory to save visualizations
+        logger: Logger instance
+    
+    Returns:
+        Path to saved figure
+    """
+    import matplotlib.pyplot as plt
+    
+    # Set style for blog-post quality
+    try:
+        import seaborn as sns
+        plt.style.use('seaborn-v0_8-darkgrid')
+        sns.set_palette("husl")
+    except ImportError:
+        # Fallback to matplotlib styles if seaborn not available
+        plt.style.use('default')
+        plt.rcParams['figure.facecolor'] = 'white'
+        plt.rcParams['axes.grid'] = True
+        plt.rcParams['grid.alpha'] = 0.3
+    
+    # Load iteration data
+    csv_path = config.analytics_dir / config.experiment_name / "all_iterations_data.csv"
+    
+    if not csv_path.exists():
+        logger.warning(f"Iteration data file not found: {csv_path}")
+        return None
+    
+    df = pd.read_csv(csv_path)
+    
+    if 'iteration_num' not in df.columns:
+        logger.warning("No iteration_num column found in data")
+        return None
+    
+    # Create figure with multiple subplots
+    fig = plt.figure(figsize=(16, 10))
+    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+    
+    # Main RMSE trend plot (large, top-left)
+    ax1 = fig.add_subplot(gs[0, :])  # Span full width
+    
+    # Get RMSE column
+    rmse_col = 'step_4_evaluation_rmse_gnn_vs_llm'
+    mae_col = 'step_4_evaluation_mae_gnn_vs_llm'
+    
+    if rmse_col not in df.columns:
+        logger.warning(f"RMSE column '{rmse_col}' not found. Available columns: {list(df.columns)}")
+        return None
+    
+    # Filter out NaN values
+    df_clean = df[['iteration_num', rmse_col]].dropna()
+    
+    if len(df_clean) == 0:
+        logger.warning("No valid RMSE data found")
+        return None
+    
+    iterations = df_clean['iteration_num']
+    rmse_values = df_clean[rmse_col]
+    
+    # Main RMSE trend line
+    ax1.plot(iterations, rmse_values, marker='o', linewidth=3, markersize=8, 
+             color='#2E86AB', label='RMSE (GNN vs LLM)', zorder=3)
+    
+    # Add smooth trend line (moving average)
+    if len(rmse_values) > 3:
+        window_size = min(3, len(rmse_values) // 3)
+        if window_size > 1:
+            rmse_smooth = rmse_values.rolling(window=window_size, center=True).mean()
+            ax1.plot(iterations, rmse_smooth, '--', linewidth=2, 
+                    color='#A23B72', alpha=0.7, label='Trend (moving avg)', zorder=2)
+    
+    # Fill area under curve
+    ax1.fill_between(iterations, rmse_values, alpha=0.2, color='#2E86AB', zorder=1)
+    
+    # Add improvement annotation
+    if len(rmse_values) > 1:
+        initial_rmse = rmse_values.iloc[0]
+        final_rmse = rmse_values.iloc[-1]
+        improvement = ((initial_rmse - final_rmse) / initial_rmse) * 100
+        
+        # Add arrow showing improvement
+        ax1.annotate('', xy=(iterations.iloc[-1], final_rmse), 
+                    xytext=(iterations.iloc[0], initial_rmse),
+                    arrowprops=dict(arrowstyle='->', lw=2, color='green', alpha=0.6))
+        
+        # Improvement text
+        ax1.text(0.5, 0.95, f'Improvement: {improvement:.1f}% reduction\n'
+                            f'Initial RMSE: {initial_rmse:.4f} → Final RMSE: {final_rmse:.4f}',
+                transform=ax1.transAxes, fontsize=12, fontweight='bold',
+                verticalalignment='top', horizontalalignment='center',
+                bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
+    
+    ax1.set_xlabel('Iteration', fontsize=14, fontweight='bold')
+    ax1.set_ylabel('RMSE', fontsize=14, fontweight='bold')
+    ax1.set_title('RMSE Trend Over Iterations: GNN Predictions vs LLM Actual Scores', 
+                 fontsize=16, fontweight='bold', pad=20)
+    ax1.legend(fontsize=12, loc='best')
+    ax1.grid(True, alpha=0.3, linestyle='--')
+    ax1.set_xlim(left=-0.5, right=iterations.max() + 0.5)
+    
+    # Subplot 2: MAE trend (bottom-left)
+    ax2 = fig.add_subplot(gs[1, 0])
+    
+    if mae_col in df.columns:
+        df_mae = df[['iteration_num', mae_col]].dropna()
+        if len(df_mae) > 0:
+            ax2.plot(df_mae['iteration_num'], df_mae[mae_col], 
+                    marker='s', linewidth=2, markersize=6, color='#F18F01', label='MAE')
+            ax2.fill_between(df_mae['iteration_num'], df_mae[mae_col], alpha=0.2, color='#F18F01')
+            ax2.set_xlabel('Iteration', fontsize=12)
+            ax2.set_ylabel('MAE', fontsize=12)
+            ax2.set_title('Mean Absolute Error Trend', fontsize=13, fontweight='bold')
+            ax2.legend(fontsize=10)
+            ax2.grid(True, alpha=0.3)
+    
+    # Subplot 3: Statistics summary (bottom-right)
+    ax3 = fig.add_subplot(gs[1, 1])
+    ax3.axis('off')
+    
+    # Calculate statistics
+    stats_text = "Statistics Summary\n\n"
+    stats_text += f"Total Iterations: {len(df_clean)}\n"
+    stats_text += f"Initial RMSE: {rmse_values.iloc[0]:.4f}\n"
+    stats_text += f"Final RMSE: {rmse_values.iloc[-1]:.4f}\n"
+    stats_text += f"Best RMSE: {rmse_values.min():.4f}\n"
+    stats_text += f"Worst RMSE: {rmse_values.max():.4f}\n"
+    stats_text += f"Mean RMSE: {rmse_values.mean():.4f}\n"
+    stats_text += f"Std RMSE: {rmse_values.std():.4f}\n"
+    
+    if len(rmse_values) > 1:
+        improvement_pct = ((rmse_values.iloc[0] - rmse_values.iloc[-1]) / rmse_values.iloc[0]) * 100
+        stats_text += f"\nImprovement: {improvement_pct:.1f}%"
+    
+    ax3.text(0.1, 0.5, stats_text, fontsize=12, family='monospace',
+            verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+    
+    # Overall title
+    fig.suptitle(f'Learning Progress: {config.experiment_name}', 
+                fontsize=18, fontweight='bold', y=0.98)
+    
+    # Save figure
+    output_path = output_dir / "rmse_trends.png"
+    plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close()
+    
+    logger.info(f"Saved RMSE trends visualization to {output_path}")
+    return output_path
+
+
 def create_diagnostic_report(
     config: Config,
     logger: Optional[logging.Logger] = None,
@@ -328,7 +487,11 @@ def create_diagnostic_report(
     logger.info(f"Visualizing top {top_n_graphs} graphs...")
     visualize_best_graphs(training_dataset, output_dir, logger, top_n=top_n_graphs)
     
-    # 3. Create summary statistics CSV
+    # 3. Create RMSE trends visualization (blog-post ready)
+    logger.info("Creating RMSE trends visualization...")
+    visualize_rmse_trends(config, output_dir, logger)
+    
+    # 4. Create summary statistics CSV
     logger.info("Creating summary statistics...")
     graphs = training_dataset.get_all()
     
@@ -354,6 +517,7 @@ def create_diagnostic_report(
     
     logger.info(f"✅ Diagnostic report complete! Outputs saved to: {output_dir}")
     logger.info(f"   - Predictions vs actual: {output_dir / 'predictions_vs_actual.png'}")
+    logger.info(f"   - RMSE trends: {output_dir / 'rmse_trends.png'}")
     logger.info(f"   - Top {top_n_graphs} graphs: {output_dir / 'best_graphs/'}")
     logger.info(f"   - Summary CSV: {csv_path}")
     
