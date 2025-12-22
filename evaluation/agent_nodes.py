@@ -274,15 +274,50 @@ def extract_topic_node(state: AgentState) -> dict:
         elapsed_time = time.time() - start_time
         final_response = assistant_start + response
         
-        # Store in scoped knowledge
-        _store_knowledge(state, node_id, scope_id, final_response)
-        print(f"   ✓ Response: {final_response[:80]}...")
+        # Parse topic tree
+        topic_tree_match = re.search(r'<TOPIC_TREE>(.*?)</TOPIC_TREE>', final_response, re.DOTALL)
+        
+        if topic_tree_match:
+            topic_tree_content = topic_tree_match.group(1).strip()
+            
+            # Extract MAIN_TOPIC
+            main_topic_match = re.search(r'MAIN_TOPIC:\s*(.+?)(?=\n├─|\n└─|HIRING_RECOMMENDATION|$)', topic_tree_content, re.DOTALL)
+            main_topic = main_topic_match.group(1).strip() if main_topic_match else "Not found"
+            
+            # Extract HIRING_RECOMMENDATION
+            hiring_match = re.search(r'HIRING_RECOMMENDATION:\s*(.+?)$', topic_tree_content, re.DOTALL)
+            hiring_rec = hiring_match.group(1).strip() if hiring_match else "Not specified"
+            
+            # Extract subtopics (simplified - just get first few lines)
+            subtopics = []
+            for line in topic_tree_content.split('\n'):
+                if '├─' in line or '└─' in line:
+                    subtopic_clean = re.sub(r'^.*?(├─|└─)\s*', '', line).strip()
+                    if subtopic_clean and not subtopic_clean.startswith('EXPERTISE_NEEDED'):
+                        subtopics.append(subtopic_clean[:100])  # Limit length
+                        if len(subtopics) >= 5:  # Limit number
+                            break
+            
+            parsed_result = f"MAIN_TOPIC: {main_topic}\nSUBTOPICS: {', '.join(subtopics[:3]) if subtopics else 'None'}\nHIRING_RECOMMENDATION: {hiring_rec[:200]}"
+            print(f"   ✓ Parsed topic tree")
+            print(f"   📌 Main topic: {main_topic[:60]}...")
+            print(f"   📋 Subtopics: {len(subtopics)} found")
+            
+            # Store parsed topic tree in structured format
+            structured_output = f"<TOPIC_TREE_OUTPUT>{parsed_result}</TOPIC_TREE_OUTPUT>"
+            _store_knowledge(state, node_id, scope_id, structured_output)
+        else:
+            print(f"   ⚠️  No <TOPIC_TREE> tag found, storing raw response")
+            structured_output = f"<TOPIC_TREE_OUTPUT>{final_response}</TOPIC_TREE_OUTPUT>"
+            _store_knowledge(state, node_id, scope_id, structured_output)
+        
         print(f"   ⏱️ Time taken: {elapsed_time:.2f} seconds")
-        return {"result": [final_response]}
+        return {}
     except Exception as e:
         print(f"   ❌ Error: {e}")
-        _store_knowledge(state, node_id, scope_id, f"Error: {str(e)}")
-        return {"result": [f"Error: {str(e)}"]}
+        error_output = f"<TOPIC_TREE_OUTPUT>ERROR: {str(e)}</TOPIC_TREE_OUTPUT>"
+        _store_knowledge(state, node_id, scope_id, error_output)
+        return {}
 
 
 def validator_node(state: AgentState) -> dict:
@@ -350,14 +385,38 @@ def validator_node(state: AgentState) -> dict:
         response = call_llm(messages, model=selected_model, max_tokens=400)
         final_response = assistant_start + response
         
-        # Store in scoped knowledge
-        _store_knowledge(state, node_id, scope_id, final_response)
-        print(f"   ✓ Response: {final_response[:80]}...")
+        # Parse validation result
+        validation_match = re.search(r'<VALIDATION>(.*?)</VALIDATION>', final_response, re.DOTALL)
+        
+        if validation_match:
+            validation_content = validation_match.group(1).strip()
+            
+            # Extract RESULT (TRUE/FALSE)
+            result_match = re.search(r'RESULT:\s*(TRUE|FALSE)', validation_content, re.IGNORECASE)
+            is_valid = result_match.group(1).upper() == "TRUE" if result_match else None
+            
+            # Extract REASONING or COUNTER_EXAMPLE
+            reasoning_match = re.search(r'(?:REASONING|COUNTER_EXAMPLE|ISSUE):\s*(.+?)(?=(?:REASONING|COUNTER_EXAMPLE|ISSUE|$))', validation_content, re.DOTALL | re.IGNORECASE)
+            reasoning = reasoning_match.group(1).strip() if reasoning_match else "No reasoning provided"
+            
+            parsed_result = f"VALIDATION_RESULT: {is_valid}\nREASONING: {reasoning[:200]}"
+            print(f"   ✓ Parsed validation: {is_valid}")
+            print(f"   📝 Reasoning: {reasoning[:80]}...")
+            
+            # Store parsed validation in structured format
+            structured_output = f"<VALIDATION_OUTPUT>{parsed_result}</VALIDATION_OUTPUT>"
+            _store_knowledge(state, node_id, scope_id, structured_output)
+        else:
+            print(f"   ⚠️  No <VALIDATION> tag found, storing raw response")
+            structured_output = f"<VALIDATION_OUTPUT>{final_response}</VALIDATION_OUTPUT>"
+            _store_knowledge(state, node_id, scope_id, structured_output)
+        
         return {}
     except Exception as e:
         print(f"   ❌ Error: {e}")
-        _store_knowledge(state, node_id, scope_id, f"Error: {str(e)}")
-        return {"result": [f"Error: {str(e)}"]}
+        error_output = f"<VALIDATION_OUTPUT>ERROR: {str(e)}</VALIDATION_OUTPUT>"
+        _store_knowledge(state, node_id, scope_id, error_output)
+        return {}
 
 
 def combine_all_node(state: AgentState, combine_all_edges: Dict) -> dict:
@@ -572,23 +631,144 @@ def split_node(state: AgentState) -> dict:
 
 
 def python_solver_node(state: AgentState) -> dict:
-    """Python solver node - pass-through (does nothing)"""
+    """Python solver node - generates Python code, executes it, and saves output.
+    
+    This node:
+    1. Gets the problem from incoming knowledge or state
+    2. Generates Python code to solve the problem
+    3. Executes the code with timeout and captures output
+    4. Saves result in <PYTHON_OUTPUT> tags for Solver to optionally use
+    """
     node_id = state.get("node_id")
     scope_id = _get_node_scope(state, node_id)
     incoming_knowledge = _get_incoming_knowledge(state, node_id, scope_id)
     
-    print(f"\n🐍 Python_solver-{node_id}: Pass-through")
+    # Get problem text (from incoming nodes in scope, or original problem)
+    problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
+    graph = state.get("graph_structure")
+    
+    if incoming_knowledge:
+        for inc_id, inc_data in incoming_knowledge.items():
+            inc_type = graph.get_node_type(inc_id) if graph else None
+            # If coming from decompose or split, use that as the problem
+            if inc_type in ["Decompose", "Split"]:
+                problem_text = str(inc_data)
+                break
+            else:
+                # Otherwise, use as context but keep original problem
+                problem_text = str(inc_data) if not problem_text else problem_text
+                break
+    
+    # Select model deterministically based on problem
+    selected_model = select_model_deterministic(problem_text, SOLVER_MODELS)  # Use solver models for code generation
+    print(f"\n🐍 Python_solver-{node_id}: Generating and executing Python code (model: {selected_model})")
     print(f"   📍 Scope: {scope_id}")
     if incoming_knowledge:
         print(f"   📥 Knowledge from: {list(incoming_knowledge.keys())}")
     
-    # Pass through incoming knowledge
-    if incoming_knowledge:
-        for inc_id, inc_data in incoming_knowledge.items():
-            _store_knowledge(state, node_id, scope_id, inc_data)
-            break
+    # PYTHON_SOLVER SPECIFIC PROMPT
+    system_prompt = """You are an expert Python programmer. Your task is to:
+        - Read the problem carefully
+        - Generate Python code that solves the problem
+        - The code should be executable and produce the answer
+        - Output ONLY the Python code, no explanations or markdown
+        - The code should print the final result
+        
+        Your output MUST be in this exact format:
+        <PYTHON_CODE>
+        [Your Python code here - must be executable]
+        </PYTHON_CODE>"""
     
-    return {}
+    user_prompt = f"""Problem: {problem_text}
+
+        Generate Python code to solve this problem. The code should be complete and executable.
+        Output the result using print().
+        
+        Format your response as:
+        <PYTHON_CODE>
+        [Your complete Python code here]
+        </PYTHON_CODE>"""
+    
+    assistant_start = "<PYTHON_CODE>\n"
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+        {"role": "assistant", "content": assistant_start}
+    ]
+    
+    try:
+        # Generate Python code
+        response = call_llm(messages, model=selected_model, max_tokens=500)
+        full_response = assistant_start + response
+        
+        # Parse Python code from response
+        code_match = re.search(r'<PYTHON_CODE>(.*?)</PYTHON_CODE>', full_response, re.DOTALL)
+        
+        if not code_match:
+            print(f"   ⚠️  No <PYTHON_CODE> tag found, trying to extract code from response")
+            # Try to extract code that might be wrapped in other tags or plain
+            code_match = re.search(r'```python\s*(.*?)```', full_response, re.DOTALL)
+            if not code_match:
+                code_match = re.search(r'```\s*(.*?)```', full_response, re.DOTALL)
+            if not code_match:
+                # Use the response directly as code (after removing assistant_start if present)
+                python_code = full_response.replace(assistant_start, "").strip()
+            else:
+                python_code = code_match.group(1).strip()
+        else:
+            python_code = code_match.group(1).strip()
+        
+        print(f"   💻 Generated Python code: {python_code[:100]}...")
+        
+        # Execute Python code with timeout
+        execution_result = None
+        execution_error = None
+        timeout_seconds = 10  # 10 second timeout
+        
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", python_code],
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                cwd=None  # Current directory
+            )
+            
+            if result.returncode == 0:
+                execution_result = result.stdout.strip()
+                print(f"   ✅ Execution successful: {execution_result[:100]}...")
+            else:
+                execution_error = result.stderr.strip() if result.stderr else "Unknown execution error"
+                print(f"   ❌ Execution failed: {execution_error[:100]}...")
+        
+        except subprocess.TimeoutExpired:
+            execution_error = f"Execution timed out after {timeout_seconds} seconds"
+            print(f"   ⏱️  {execution_error}")
+        except Exception as e:
+            execution_error = f"Execution error: {str(e)}"
+            print(f"   ❌ {execution_error}")
+        
+        # Store result in structured format
+        if execution_result:
+            structured_output = f"<PYTHON_OUTPUT>{execution_result}</PYTHON_OUTPUT>"
+            _store_knowledge(state, node_id, scope_id, structured_output)
+            return {}
+        elif execution_error:
+            # Store error message so downstream nodes know Python execution failed
+            structured_output = f"<PYTHON_OUTPUT>ERROR: {execution_error}</PYTHON_OUTPUT>"
+            _store_knowledge(state, node_id, scope_id, structured_output)
+            return {}
+        else:
+            structured_output = f"<PYTHON_OUTPUT>ERROR: Could not extract or execute Python code</PYTHON_OUTPUT>"
+            _store_knowledge(state, node_id, scope_id, structured_output)
+            return {}
+    
+    except Exception as e:
+        print(f"   ❌ Error generating Python code: {e}")
+        error_output = f"<PYTHON_OUTPUT>ERROR: {str(e)}</PYTHON_OUTPUT>"
+        _store_knowledge(state, node_id, scope_id, error_output)
+        return {}
 
 
 def decompose_node(state: AgentState) -> dict:
@@ -717,26 +897,90 @@ def decompose_node(state: AgentState) -> dict:
 
 
 def explain_node(state: AgentState) -> dict:
-    """Explain node - provides explanation"""
+    """Explain node - provides clear explanation of the solution or process.
+    
+    This node:
+    1. Gets the solution/result from incoming knowledge
+    2. Generates a clear explanation using LLM
+    3. Saves explanation in structured format
+    """
     node_id = state.get("node_id")
     scope_id = _get_node_scope(state, node_id)
     incoming_knowledge = _get_incoming_knowledge(state, node_id, scope_id)
     
-    print(f"\n📖 Explain-{node_id}: Providing explanation")
+    # Get the problem to explain
+    problem_text = state['problem'][0] if isinstance(state['problem'], list) and state['problem'] else str(state['problem'])
+    
+    # Get content to explain (from incoming nodes)
+    content_to_explain = ""
+    if incoming_knowledge:
+        for inc_id, inc_data in incoming_knowledge.items():
+            content_to_explain = str(inc_data)
+            break
+    
+    if not content_to_explain:
+        content_to_explain = problem_text
+    
+    # Select model deterministically based on problem
+    selected_model = select_model_deterministic(problem_text, SOLVER_MODELS)  # Use solver models for explanations
+    print(f"\n📖 Explain-{node_id}: Generating explanation (model: {selected_model})")
     print(f"   📍 Scope: {scope_id}")
     if incoming_knowledge:
         print(f"   📥 Knowledge from: {list(incoming_knowledge.keys())}")
     
-    # Get knowledge to explain
-    explanation_text = ""
-    if incoming_knowledge:
-        for inc_id, inc_data in incoming_knowledge.items():
-            explanation_text = str(inc_data)
-            break
+    # EXPLAIN SPECIFIC PROMPT
+    system_prompt = """You are an expert teacher and communicator. Your task is to:
+        - Take a solution or result and provide a clear, concise explanation
+        - Explain the reasoning, steps, or approach
+        - Make it easy to understand for someone learning
+        - Keep explanations focused and informative
+        
+        Output MUST be in this exact format:
+        <EXPLANATION>
+        [Your clear explanation here - 2-5 sentences]
+        </EXPLANATION>"""
     
-    # Store explanation (simulated response)
-    explanation = f"Explanation: {explanation_text[:100]}..."
-    _store_knowledge(state, node_id, scope_id, explanation)
+    user_prompt = f"""Problem: {problem_text}
+
+        Content to explain:
+        {content_to_explain[:500]}
+        
+        Provide a clear explanation of this solution or result:
+        <EXPLANATION>
+        [Your explanation here]
+        </EXPLANATION>"""
     
-    return {}
+    assistant_start = "<EXPLANATION>\n"
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+        {"role": "assistant", "content": assistant_start}
+    ]
+    
+    try:
+        response = call_llm(messages, model=selected_model, max_tokens=300)
+        final_response = assistant_start + response
+        
+        # Parse explanation
+        explanation_match = re.search(r'<EXPLANATION>(.*?)</EXPLANATION>', final_response, re.DOTALL)
+        
+        if explanation_match:
+            explanation = explanation_match.group(1).strip()
+            print(f"   ✓ Generated explanation: {explanation[:80]}...")
+            
+            # Store parsed explanation in structured format
+            structured_output = f"<EXPLANATION_OUTPUT>{explanation}</EXPLANATION_OUTPUT>"
+            _store_knowledge(state, node_id, scope_id, structured_output)
+        else:
+            print(f"   ⚠️  No <EXPLANATION> tag found, storing raw response")
+            structured_output = f"<EXPLANATION_OUTPUT>{final_response}</EXPLANATION_OUTPUT>"
+            _store_knowledge(state, node_id, scope_id, structured_output)
+        
+        return {}
+    except Exception as e:
+        print(f"   ❌ Error: {e}")
+        error_output = f"<EXPLANATION_OUTPUT>ERROR: {str(e)}</EXPLANATION_OUTPUT>"
+        _store_knowledge(state, node_id, scope_id, error_output)
+        return {}
 

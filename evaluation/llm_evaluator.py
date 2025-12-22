@@ -1,7 +1,8 @@
 import logging
 import random
 import time
-from typing import List, Dict, Any, Tuple
+import re
+from typing import List, Dict, Any, Tuple, Optional
 from config.settings import Config
 from evaluation.graph_builder import build_langgraph, visualize_graph_ascii
 from evaluation.agent_state import AgentState, GlobalKnowledge
@@ -137,6 +138,7 @@ def _evaluate_answer(
     
     Returns a score between 0.0 and 1.0:
     - 1.0: Exact match (case-insensitive)
+    - 0.7 * min(a/b, b/a): Numerical relative error (when both are numeric)
     - 0.7: Contains expected answer
     - 0.5: Partial match
     - 0.0: No match
@@ -145,6 +147,54 @@ def _evaluate_answer(
     llm_output_lower = llm_output.lower().strip()
     expected_lower = expected_output.lower().strip()
     
+    # First, try to extract numerical values from both outputs
+    def extract_number(text: str) -> Optional[float]:
+        """Extract first number from text, handling integers and floats."""
+        # Try to find a number (integer or float)
+        # Patterns: "30", "32.5", "-10", "1e5", etc.
+        patterns = [
+            r'-?\d+\.\d+',  # Float
+            r'-?\d+',        # Integer
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                try:
+                    return float(match.group())
+                except ValueError:
+                    continue
+        return None
+    
+    llm_num = extract_number(llm_output)
+    expected_num = extract_number(expected_output)
+    
+    # If both are numerical, use relative error scoring
+    if llm_num is not None and expected_num is not None and expected_num != 0:
+        # Compute relative error: 0.7 * min(a/b, b/a)
+        ratio1 = abs(llm_num / expected_num) if expected_num != 0 else 0
+        ratio2 = abs(expected_num / llm_num) if llm_num != 0 else 0
+        relative_score = min(ratio1, ratio2)
+        score = 0.7 * relative_score
+        
+        # Exact numerical match gets full score
+        if abs(llm_num - expected_num) < 1e-6:  # Very close to zero difference
+            score = 1.0
+            match_type = "EXACT_NUMERICAL_MATCH"
+        else:
+            match_type = f"NUMERICAL_RELATIVE_ERROR (LLM: {llm_num}, Expected: {expected_num}, Ratio: {relative_score:.4f})"
+        
+        logger.debug(
+            f"  Problem: {problem[:60]}...\n"
+            f"  Expected: {expected_output} (numeric: {expected_num})\n"
+            f"  LLM Output: {llm_output[:100]}... (numeric: {llm_num})\n"
+            f"  Match Type: {match_type}\n"
+            f"  Score: {score:.4f}"
+        )
+        
+        return score
+    
+    # Fall back to string matching for non-numerical answers
     # Exact match
     if llm_output_lower == expected_lower:
         score = 1.0
@@ -298,6 +348,27 @@ def evaluate_selected_graphs(
                         
                         # Extract solution (now a string, not a list)
                         llm_output = result.get('solution', '')
+                        
+                        # If no solution from Solver, check for Python_solver output (high priority)
+                        if not llm_output or llm_output.strip() == '':
+                            # Search scoped knowledge for successful Python_solver output
+                            scoped_knowledge = result.get('scoped_knowledge', {})
+                            python_output = None
+                            for scope_id, scope_knowledge in scoped_knowledge.items():
+                                if hasattr(scope_knowledge, 'node_data'):
+                                    for node_id, node_data in scope_knowledge.node_data.items():
+                                        node_data_str = str(node_data)
+                                        # Look for successful Python_solver output (not ERROR)
+                                        python_match = re.search(r'<PYTHON_OUTPUT>(.*?)</PYTHON_OUTPUT>', node_data_str, re.DOTALL)
+                                        if python_match and 'ERROR' not in python_match.group(1):
+                                            python_output = python_match.group(1).strip()
+                                            logger.debug(f"  Using Python_solver output as solution: {python_output[:100]}...")
+                                            break
+                                if python_output:
+                                    break
+                            
+                            if python_output:
+                                llm_output = python_output
                         
                         # Evaluate answer
                         score = _evaluate_answer(llm_output, expected, problem, logger)
