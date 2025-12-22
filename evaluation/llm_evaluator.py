@@ -346,29 +346,57 @@ def evaluate_selected_graphs(
                         result = compiled_graph.invoke(initial_state)
                         execution_time = time.time() - exec_start
                         
-                        # Extract solution (now a string, not a list)
+                        # Extract solution - check multiple sources in priority order:
+                        # 1. Combine_all final solution (from state['solution'])
+                        # 2. Python_solver output (high priority for numerical problems)
+                        # 3. Solver outputs from scoped knowledge (if no Combine_all)
+                        
                         llm_output = result.get('solution', '')
                         
-                        # If no solution from Solver, check for Python_solver output (high priority)
+                        # If no solution from Combine_all, search scoped knowledge
                         if not llm_output or llm_output.strip() == '':
-                            # Search scoped knowledge for successful Python_solver output
                             scoped_knowledge = result.get('scoped_knowledge', {})
+                            
+                            # Priority 1: Python_solver output (highest priority for successful execution)
                             python_output = None
+                            solver_outputs = []  # Collect all Solver outputs
+                            
+                            graph_structure = result.get('graph_structure')
+                            if graph_structure:
+                                # Get all nodes to identify their types
+                                node_types = {nid: ntype for nid, ntype in graph_structure.nodes}
+                            else:
+                                node_types = {}
+                            
                             for scope_id, scope_knowledge in scoped_knowledge.items():
                                 if hasattr(scope_knowledge, 'node_data'):
                                     for node_id, node_data in scope_knowledge.node_data.items():
                                         node_data_str = str(node_data)
-                                        # Look for successful Python_solver output (not ERROR)
-                                        python_match = re.search(r'<PYTHON_OUTPUT>(.*?)</PYTHON_OUTPUT>', node_data_str, re.DOTALL)
-                                        if python_match and 'ERROR' not in python_match.group(1):
-                                            python_output = python_match.group(1).strip()
-                                            logger.debug(f"  Using Python_solver output as solution: {python_output[:100]}...")
-                                            break
-                                if python_output:
-                                    break
+                                        node_type = node_types.get(node_id, "unknown")
+                                        
+                                        # Check for Python_solver output (prioritize this)
+                                        if node_type == "Python_solver":
+                                            python_match = re.search(r'<PYTHON_OUTPUT>(.*?)</PYTHON_OUTPUT>', node_data_str, re.DOTALL)
+                                            if python_match and 'ERROR' not in python_match.group(1):
+                                                python_output = python_match.group(1).strip()
+                                                logger.debug(f"  Found Python_solver output: {python_output[:100]}...")
+                                        
+                                        # Check for Solver outputs
+                                        elif node_type == "Solver":
+                                            solver_match = re.search(r'<SOLVER_OUTPUT>(.*?)</SOLVER_OUTPUT>', node_data_str, re.DOTALL)
+                                            if solver_match:
+                                                solver_output = solver_match.group(1).strip()
+                                                solver_outputs.append(solver_output)
+                                                logger.debug(f"  Found Solver-{node_id} output: {solver_output[:100]}...")
                             
+                            # Use Python_solver output if available (highest priority)
                             if python_output:
                                 llm_output = python_output
+                                logger.debug(f"  ✓ Using Python_solver output as solution (priority)")
+                            # Otherwise, use first Solver output if available
+                            elif solver_outputs:
+                                llm_output = solver_outputs[0]
+                                logger.debug(f"  ✓ Using Solver output as solution (found {len(solver_outputs)} solver(s))")
                         
                         # Evaluate answer
                         score = _evaluate_answer(llm_output, expected, problem, logger)
