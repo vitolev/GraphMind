@@ -9,20 +9,20 @@ data_format: Data
 
 # GNN Configuration
 gnn_hidden_dim: 16
-gnn_num_layers: 2
+gnn_num_layers: 3
 gnn_num_heads: 4
-gnn_dropout: 0.1
+gnn_dropout: 0.0
 gnn_learning_rate: 0.001
 gnn_batch_size: 32
-gnn_epochs: 150
+gnn_epochs: 300
 gnn_device: cuda
 
 # Selection Strategy
-top_k_to_keep: 10 # Number of graphs to keep after each iteration should be smaller in starting sets
-eval_k_best: 5 # Number of graphs to evaluate after each iteration
+top_k_to_keep: 15 # Number of graphs to keep after each iteration should be smaller in starting sets
+eval_k_best: 10 # Number of graphs to evaluate after each iteration
 
 # Evaluation
-num_eval_problems: 10
+num_eval_problems: 5
 eval_timeout_seconds: 30
 #llm_model: gpt-4
 simulate_llm_evaluation: false  # Set to true to use deterministic graph-based scoring instead of actual LLM calls
@@ -42,7 +42,7 @@ local_llm_model: TinyLlama/TinyLlama-1.1B-Chat-v1.0  # ~0.5-1 sec/call, decent f
 local_llm_device: auto  # Options: "auto" (detects CUDA/MPS), "cuda", "mps" (Apple Silicon), "cpu"
 
 # Pipeline Control
-max_iterations: 25
+max_iterations: 40
 checkpoint_frequency: 5
 
 # Paths
@@ -51,5 +51,5 @@ log_dir: ./logs
 data_dir: ./data
 
 # Experiment Info
-experiment_name: more-agents-real-llm-v3
+experiment_name: more-agents-real-llm-v4-bestGCN
 seed: 42

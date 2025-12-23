@@ -1,6 +1,7 @@
 """LLM provider setup and initialization (Groq, Ollama, Local)."""
 
 import os
+import time
 from typing import List, Dict, Optional, Tuple
 
 # Try to load .env file if python-dotenv is available
@@ -15,6 +16,8 @@ _groq_clients = []  # List of Groq client instances, one per API key
 _current_client_index = 0  # Index of currently active client
 _rate_limited_api_keys = set()  # Set of API key indices that are rate-limited
 _api_key_last_model = {}  # Track last model used per API key (to avoid repeating when switching back)
+_api_key_last_used = {}  # Track last usage timestamp per API key (for time-based rotation)
+_API_KEY_ROTATION_INTERVAL = 10  # Rotate API keys every 20 seconds
 
 # Local LLM state
 _local_llm_model = None
@@ -118,7 +121,7 @@ def _load_local_llm(model_name: str, device: str = "auto"):
 
 def initialize_groq_clients():
     """Initialize Groq client(s) from GROQ_API_KEYS in .env file (comma-separated)."""
-    global _groq_clients, _current_client_index, _rate_limited_api_keys, _api_key_last_model
+    global _groq_clients, _current_client_index, _rate_limited_api_keys, _api_key_last_model, _api_key_last_used
     
     from groq import Groq
     
@@ -126,6 +129,7 @@ def initialize_groq_clients():
     _current_client_index = 0
     _rate_limited_api_keys = set()
     _api_key_last_model = {}
+    _api_key_last_used = {}
     
     # Load comma-separated API keys from environment
     groq_api_keys_str = os.getenv("GROQ_API_KEYS", "").strip()
@@ -134,18 +138,20 @@ def initialize_groq_clients():
         return
     
     api_keys = [key.strip() for key in groq_api_keys_str.split(",") if key.strip()]
+    current_time = time.time()
     
     # Initialize clients
     for i, api_key in enumerate(api_keys):
         try:
             _groq_clients.append(Groq(api_key=api_key))
             _api_key_last_model[i] = None
+            _api_key_last_used[i] = current_time  # Initialize with current time
             print(f"✓ Initialized Groq API key {i+1}/{len(api_keys)}")
         except Exception as e:
             print(f"⚠️  Failed to initialize Groq API key {i+1}: {e}")
     
     if len(_groq_clients) > 0:
-        print(f"✓ Initialized {len(_groq_clients)} Groq API key(s)")
+        print(f"✓ Initialized {len(_groq_clients)} Groq API key(s) (rotating every {_API_KEY_ROTATION_INTERVAL} seconds)")
 
 
 def get_next_available_client_and_model(model_pool: List[str], current_model: str = None):
@@ -153,8 +159,9 @@ def get_next_available_client_and_model(model_pool: List[str], current_model: st
     
     Strategy:
     1. Always use the same model for an agent type (first model in pool)
-    2. When switching API keys, keep the same model
-    3. Only switch models when returning to an API key that was rate-limited with that model
+    2. Rotate API keys every 20 seconds (time-based rotation)
+    3. When switching API keys, keep the same model
+    4. Only switch models when returning to an API key that was rate-limited with that model
     
     Args:
         model_pool: List of available models for this agent type (should have one model for now)
@@ -165,10 +172,12 @@ def get_next_available_client_and_model(model_pool: List[str], current_model: st
     """
     from evaluation.model_selection import is_model_rate_limited
     
-    global _groq_clients, _current_client_index, _rate_limited_api_keys, _api_key_last_model
+    global _groq_clients, _current_client_index, _rate_limited_api_keys, _api_key_last_model, _api_key_last_used, _API_KEY_ROTATION_INTERVAL
     
     if len(_groq_clients) == 0:
         return None, None
+    
+    current_time = time.time()
     
     # Get the primary model for this agent type (first model in pool)
     primary_model = model_pool[0] if model_pool else None
@@ -189,17 +198,76 @@ def get_next_available_client_and_model(model_pool: List[str], current_model: st
         _rate_limited_api_keys.clear()
         available_indices = list(range(len(_groq_clients)))
     
-    # Priority 1: Try to use the primary model with an API key that hasn't been rate-limited
-    # Prefer API keys that haven't been rate-limited with this model
-    for idx in available_indices:
-        if not is_model_rate_limited(model_to_use, idx):
-            # This API key is available and this model works on it
-            _current_client_index = idx
-            client = _groq_clients[_current_client_index]
-            _api_key_last_model[_current_client_index] = model_to_use
-            return client, model_to_use
+    # Find keys that work with this model (not rate-limited with this specific model)
+    working_indices = [idx for idx in available_indices if not is_model_rate_limited(model_to_use, idx)]
     
-    # Priority 2: All preferred API keys are rate-limited with the primary model
+    # Check if we should rotate API keys based on time (20-second interval)
+    should_rotate_by_time = False
+    if _current_client_index in _api_key_last_used:
+        time_since_last_use = current_time - _api_key_last_used[_current_client_index]
+        if time_since_last_use >= _API_KEY_ROTATION_INTERVAL:
+            should_rotate_by_time = True
+    
+    # Priority 1: Time-based rotation (every 5 seconds)
+    # Rotate through ALL available API keys (not just model-specific working keys)
+    # This ensures we cycle through all keys evenly
+    if should_rotate_by_time and len(available_indices) > 1:
+        old_index = _current_client_index
+        # Find current index in available indices
+        if _current_client_index in available_indices:
+            current_pos = available_indices.index(_current_client_index)
+            next_pos = (current_pos + 1) % len(available_indices)
+            _current_client_index = available_indices[next_pos]
+        else:
+            # Current index is not available, use first available key
+            _current_client_index = available_indices[0]
+        
+        # Log time-based rotation (not rate limit related)
+        if old_index != _current_client_index:
+            time_since_last_use = current_time - _api_key_last_used.get(old_index, current_time)
+            print(f"      🔄 Time-based rotation: Switched from API key {old_index + 1} to API key {_current_client_index + 1} (after {time_since_last_use:.1f}s)")
+        
+        # Update last used time
+        _api_key_last_used[_current_client_index] = current_time
+        client = _groq_clients[_current_client_index]
+        selected_model = model_to_use
+        _api_key_last_model[_current_client_index] = selected_model
+        return client, selected_model
+    
+    # Priority 2: Try to use the primary model with an API key that hasn't been rate-limited
+    # Use the working_indices we already calculated above
+    
+    if len(working_indices) > 0:
+        # If current key works, use it (don't rotate if time hasn't passed)
+        if _current_client_index in working_indices:
+            # Current key works, use it
+            selected_idx = _current_client_index
+        else:
+            # Current key doesn't work, find next working key starting from current position
+            # Start search from current position in all indices, then wrap around
+            all_indices_ordered = available_indices.copy()
+            # Reorder to start from current position
+            if _current_client_index in all_indices_ordered:
+                current_pos = all_indices_ordered.index(_current_client_index)
+                all_indices_ordered = all_indices_ordered[current_pos+1:] + all_indices_ordered[:current_pos+1]
+            
+            # Find first working key in reordered list
+            selected_idx = None
+            for idx in all_indices_ordered:
+                if idx in working_indices:
+                    selected_idx = idx
+                    break
+            
+            if selected_idx is None:
+                selected_idx = working_indices[0]  # Fallback
+        
+        _current_client_index = selected_idx
+        _api_key_last_used[_current_client_index] = current_time
+        client = _groq_clients[_current_client_index]
+        _api_key_last_model[_current_client_index] = model_to_use
+        return client, model_to_use
+    
+    # Priority 3: All preferred API keys are rate-limited with the primary model
     # Rotate to next API key (try ones that were rate-limited - they might have reset)
     # When we come back to an API key, we'll try the same model again
     # Only switch models if it fails again (handled in call_groq_with_retry)
@@ -219,6 +287,8 @@ def get_next_available_client_and_model(model_pool: List[str], current_model: st
     # If it fails again, call_groq_with_retry will handle it and can switch models
     selected_model = model_to_use
     _api_key_last_model[_current_client_index] = selected_model
+    # Update last used time
+    _api_key_last_used[_current_client_index] = current_time
     
     return client, selected_model
 
