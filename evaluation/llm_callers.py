@@ -274,6 +274,39 @@ def call_groq_with_retry(messages: List[Dict], model: str = "llama-3.1-8b-instan
                     print(f"      ⏳ Rate limited on {selected_model}. Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
             elif 'invalid_request_error' in error_msg or '400' in error_msg:
+                # Check for organization_restricted error first
+                if 'organization_restricted' in error_msg or 'Organization has been restricted' in error_msg:
+                    api_key_num = current_api_key_index + 1  # Human-readable (1-indexed)
+                    error_msg_text = (
+                        f"ERROR: Organization restricted error on API key {api_key_num} (index {current_api_key_index})\n"
+                        f"This means API key {api_key_num} in your GROQ_API_KEYS sequence has been restricted.\n"
+                        f"Please remove API key {api_key_num} from your .env file's GROQ_API_KEYS\n"
+                        f"If your keys are: key1,key2,key3,key4 and this is key {api_key_num}, remove the {api_key_num}th key\n"
+                        f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    )
+                    
+                    print(f"\n      ❌ {error_msg_text.split(chr(10))[0]}")
+                    print(f"      🔑 {error_msg_text.split(chr(10))[1]}")
+                    print(f"      💡 {error_msg_text.split(chr(10))[2]}")
+                    print(f"      📝 {error_msg_text.split(chr(10))[3]}")
+                    
+                    # Save to file
+                    from pathlib import Path
+                    restricted_keys_file = Path("logs/restricted_api_keys.log")
+                    restricted_keys_file.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    with open(restricted_keys_file, "a") as f:
+                        f.write("\n" + "="*60 + "\n")
+                        f.write(error_msg_text)
+                    
+                    print(f"      💾 This error has been logged to: {restricted_keys_file}")
+                    
+                    # Mark this API key as restricted so we skip it in future calls
+                    mark_api_key_rate_limited(current_api_key_index)
+                    # Continue to next attempt (will try another API key)
+                    continue
+                
+                # Other 400 errors - try combining messages
                 if len(messages) > 1:
                     combined_text = ""
                     for msg in messages:
