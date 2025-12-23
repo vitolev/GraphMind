@@ -107,10 +107,9 @@ class HetGATNet(torch.nn.Module):
         # ============================================================
         # 3) Use super node as graph-level embedding
         # ============================================================
-        super_idx = data.super_node_idx.to(self.device)
-        super_emb = x_dict["super"][super_idx]          
-
-        return self.mlp(super_emb)
+        super_emb = x_dict["super"]
+        
+        return self.mlp(super_emb).view(-1)
 
     @torch.no_grad()
     def predict(self, data_list: List[HeteroData]) -> List[float]:
@@ -118,7 +117,7 @@ class HetGATNet(torch.nn.Module):
         if not self.is_trained:
             self.logger.warning("Model not trained yet, returning random predictions.")
             import random
-            return [random.random() for _ in data_list]
+            return [random.random() * 0.5 for _ in data_list]
 
         loader = DataLoader(data_list, batch_size=1024, shuffle=False)
         preds = []

@@ -225,7 +225,27 @@ def _random_graph(max_depth=2, max_nodes=20) -> Graph:
     return graph_obj
 
 if __name__ == "__main__":
-    generated_graphs = GraphSet()
-    for i in range(10):
-        g = _random_graph(max_depth=2, max_nodes=8)
-        g.visualize()
+    unique_edges = set()
+    for i in range(10000000):
+        print(f"Generating graph {i+1}/10000000")
+        g = _random_graph(max_depth=4, max_nodes=30)
+        edges = g.get_edges()
+        nodes = g.get_nodes()
+
+        # Map node ids to types for printing
+        id_to_type = {node_id: type_name for node_id, type_name in nodes}
+
+        # Map edges to type names for easier reading
+        edges_with_types = [(id_to_type[src], id_to_type[dst]) for src, dst in edges]
+
+        # Add edges to unique set
+        for edge in edges_with_types:
+            unique_edges.add(edge)
+
+    print(f"Total unique edges across generated graphs: {len(unique_edges)}")
+
+    # Save to .txt file
+    with open("unique_edges.txt", "w") as f:
+        for edge in unique_edges:
+            f.write(f"({edge[0]},{edge[1]}),\n")
+    

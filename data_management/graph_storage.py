@@ -140,8 +140,6 @@ class Graph:
                 y=torch.tensor([self.llm_score], dtype=torch.float)
             )
 
-            data.super_node_idx = torch.tensor([super_idx], dtype=torch.long)
-
             return data
 
         # --- Case 2: Heterogeneous Data ---
@@ -180,9 +178,6 @@ class Graph:
             # ---- Super node ----
             super_type = "super"
             hetero_data[super_type].x = torch.zeros((1, 1), dtype=torch.float)
-
-            # Index of the super node (per graph)
-            hetero_data.super_node_idx = torch.tensor([0], dtype=torch.long)
 
             # ---- Connect super node to all node types (bidirectional) ----
             for node_type, node_ids in nodes_by_type.items():
