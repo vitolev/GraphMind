@@ -4,14 +4,14 @@ generation_strategy: random
 max_nodes: 8
 max_depth: 3
 
-gnn_model_type: graph_sage
+gnn_model_type: gcn
 data_format: Data
 
 # GNN Configuration
-gnn_hidden_dim: 32
+gnn_hidden_dim: 16
 gnn_num_layers: 3
 gnn_num_heads: 4
-gnn_dropout: 0.2
+gnn_dropout: 0.0
 gnn_learning_rate: 0.001
 gnn_batch_size: 32
 gnn_epochs: 300
@@ -51,5 +51,5 @@ log_dir: ./logs
 data_dir: ./data
 
 # Experiment Info
-experiment_name: final-experiment-best-graph-sage
+experiment_name: more-agents-real-llm-v4-bestGCN
 seed: 42
