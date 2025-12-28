@@ -83,13 +83,117 @@ Our framework operates through an iterative 6-step pipeline:
 
 The cycle repeats for up to 40 iterations, with each iteration improving the GNN's predictive accuracy.
 
+**Main loop code snippet:**
+
+```python
+def run_single_iteration(iteration_num, config, model, good_graphs_set, 
+                        training_dataset, math_problems):
+    # Step 1: Generate candidate graphs
+    generated_graphs = generate_graph_batch(config, training_dataset)
+    
+    # Step 2: Predict performance with GNN
+    predictions = predict_batch_performance(config, model, generated_graphs)
+    
+    # Step 3: Select top candidates
+    selected_graphs = select_top_graphs(config, good_graphs_set, predictions)
+    
+    # Step 4: Evaluate with LLMs
+    evaluation_results = evaluate_selected_graphs(config, selected_graphs, math_problems)
+    
+    # Step 5: Update training dataset
+    training_dataset = update_training_data(config, evaluation_results, training_dataset)
+    
+    # Step 6: Retrain GNN
+    model = retrain_gnn_model(config, training_dataset)
+    
+    return model, training_dataset
+```
+
 ### Step 1: Graph Generation
 
-[VITO]
+Graphs are generated using a semi-random recursive function that respects max nodes and max depth constraints. The generation follows rules: `Decompose` nodes create multiple branches, and `Combine_all` nodes are automatically added to merge branch outputs.
+
+**Code snippet:**
+
+```python
+def _random_strategy(config, training_dataset=None):
+    generated_graphs = GraphSet()
+    
+    for graph_idx in range(config.num_graphs_per_iteration):
+        graph = _random_graph(config.max_depth, config.max_nodes)
+        
+        # Filter duplicates
+        if generated_graphs.contains(graph):
+            continue
+        if training_dataset and training_dataset.contains(graph):
+            continue
+            
+        generated_graphs.add_graph(graph)
+    
+    return generated_graphs
+
+def _rec(node, depth, max_depth, remaining_nodes):
+    """Recursive graph building with depth and node constraints"""
+    node_type = node.type_name
+    rule = RULES[node_type]
+    num_branches = rule["branches"]
+    
+    # Handle multi-branch nodes (Decompose, Split)
+    if node_type in ["Decompose_2", "Decompose_3", "Decompose_4", "Split"]:
+        depth += 1
+        children_to_combine = []
+        
+        for _ in range(num_branches):
+            child_type, required_nodes = _pick_random_child(node_type, remaining_nodes)
+            child = _rec(Node(child_type), depth, max_depth, remaining_nodes - required_nodes)
+            node.add_child(child)
+            children_to_combine.append(child)
+        
+        # Attach Combine_all to merge branches
+        combine_all_node = Node("Combine_all")
+        for child in children_to_combine:
+            last_node = child
+            while last_node.children:
+                last_node = last_node.children[0]
+            last_node.add_child(combine_all_node)
+        
+        _rec(combine_all_node, depth, max_depth, remaining_nodes)
+        return node
+    
+    # Single branch nodes (Solver, Python_solver, etc.)
+    if depth == max_depth:
+        child_type, required_nodes = _pick_no_depth_increase_child(node_type, remaining_nodes)
+    else:
+        child_type, required_nodes = _pick_random_child(node_type, remaining_nodes)
+    
+    if child_type != "END":
+        child = _rec(Node(child_type), depth, max_depth, remaining_nodes - required_nodes)
+        node.add_child(child)
+    
+    return node
+```
 
 ### Step 2: GNN Prediction
 
-[VITO]
+The GNN model takes graph structures as input and predicts performance scores. Each graph is converted to PyTorch Geometric format (with node features, edge indices, and graph-level metadata), then passed through the trained GNN for batch prediction.
+
+**Code snippet:**
+
+```python
+def predict_batch_performance(config, model, generated_graphs):
+    # Convert graphs to PyTorch Geometric format
+    pyg_graphs = generated_graphs.to_pyg(config)
+    
+    # Batch prediction with GNN
+    with torch.no_grad():
+        predictions = model.predict(pyg_graphs)
+    
+    # Assign predicted scores to graphs
+    for graph, pred in zip(generated_graphs.graphs, predictions):
+        graph.set_gnn_score(float(pred))
+    
+    return generated_graphs
+```
 
 ### Step 3: Candidate Selection
 
@@ -100,22 +204,184 @@ Selection strategy:
 - Select top-k (k=10) candidates
 - Maintain diversity considerations (future work)
 
+**Code snippet:**
+
+```python
+def select_top_graphs(config, good_graphs_set, batch):
+    # Sort batch by GNN prediction scores
+    batch.sort_by_scores()
+    
+    # Merge top-k from batch into good_graphs_set
+    num_to_add = min(config.top_k_to_keep, batch.size())
+    graphs_to_add = [batch.get(i) for i in range(num_to_add)]
+    good_graphs_set.add_graphs(graphs_to_add, sort=True)
+    
+    # Select top candidates for evaluation
+    num_to_select = min(config.eval_k_best, good_graphs_set.size())
+    selected_graphs = good_graphs_set.get_best_k_and_remove(num_to_select)
+    
+    # Maintain size limit
+    good_graphs_set.enforce_max_size(config.top_k_to_keep)
+    
+    return GraphSet(selected_graphs)
+```
+
 ### Step 4: LLM Evaluation
 
-Selected graphs are evaluated using actual LLM calls on mathematical problem-solving tasks:
+Selected graphs are evaluated by executing the multi-agent system on real mathematical problems. Each graph structure (defined by nodes and edges) is converted into an executable **LangGraph** workflow, where each node represents an agent that processes information and passes results to connected agents.
 
-- **Dataset**: NVIDIA OpenMathInstruct-1
-- **Problems per graph**: 5
-- **Evaluation metric**: Solution accuracy with numerical relative error scoring
-- **Scoring function**: For numerical answers, we use `0.7 * min(a/b, b/a)` to give partial credit for close answers
+**LangGraph Framework**: We use LangGraph to orchestrate multi-agent workflows. LangGraph provides a state-based execution model where agents communicate through shared state, making it ideal for representing our graph topologies as executable pipelines.
 
-Each evaluation runs the multi-agent system end-to-end, with agents communicating according to the graph topology. The final solution is extracted and compared against the expected answer.
+The evaluation process converts the abstract graph structure into a LangGraph by:
+1. Mapping each node type to its corresponding agent function (Solver, Python_solver, Validator, etc.)
+2. Creating edges that route state between agents
+3. Handling special nodes like `Combine_all` that merge outputs from multiple branches
+
+**Code snippet - Building LangGraph:**
+
+```python
+def build_langgraph(nodes: List[Tuple[int, str]], edges: List[Tuple[int, int]]):
+    """Build executable LangGraph from graph structure"""
+    from langgraph.graph import StateGraph, START, END
+    
+    id_to_type = {n: t for n, t in nodes}
+    graph_out = {}  # outgoing edges per node
+    graph_in = {}   # incoming edges per node
+    
+    # Build edge maps
+    for src, dst in edges:
+        graph_out.setdefault(src, []).append(dst)
+        graph_in.setdefault(dst, []).append(src)
+    
+    # Map node types to agent functions
+    node_handlers = {
+        "Solver": solver_node,
+        "Python_solver": python_solver_node,
+        "Validator": validator_node,
+        "Extract_topic": extract_topic_node,
+        "Decompose": decompose_node,
+        "Split": split_node,
+        "Explain": explain_node,
+    }
+    
+    # Create LangGraph builder
+    builder = StateGraph(AgentState)
+    
+    # Add nodes (map each node to its agent function)
+    for node_id, node_type in nodes:
+        if node_type in ["START", "END"]:
+            continue
+        
+        node_name = f"{node_type.lower()}_{node_id}"
+        
+        if node_type == "Combine_all":
+            # Special handling for Combine_all nodes
+            builder.add_node(node_name, make_combine_node(node_id))
+        elif node_type in node_handlers:
+            # Map to agent function
+            builder.add_node(node_name, node_handlers[node_type])
+        else:
+            builder.add_node(node_name, make_generic_node(node_id, node_type))
+    
+    # Add edges (connect agents according to graph topology)
+    for src, dst in edges:
+        src_type = id_to_type.get(src)
+        dst_type = id_to_type.get(dst)
+        
+        if src_type == "START":
+            builder.add_edge(START, get_node_name(dst))
+        elif dst_type == "END":
+            builder.add_edge(get_node_name(src), END)
+        else:
+            builder.add_edge(get_node_name(src), get_node_name(dst))
+    
+    return builder.compile()  # Compile to executable graph
+```
+
+**Evaluation Process**: Each selected graph is evaluated on 5 mathematical problems from the NVIDIA OpenMathInstruct-1 dataset:
+
+- **Execution**: The compiled LangGraph runs with an initial state containing the problem text
+- **Agent Communication**: Agents process information sequentially according to the graph topology, with specialized agents (Python_solver, Solver, Validator, etc.) performing their roles
+- **Solution Extraction**: The final solution is extracted from the graph state, prioritizing Python_solver outputs for numerical problems
+- **Scoring**: Solutions are scored using numerical relative error (`0.7 * min(a/b, b/a)`) for partial credit, or exact/partial string matching for non-numerical answers
+
+**Code snippet - Evaluation:**
+
+```python
+def evaluate_selected_graphs(config, selected_graphs, math_problems):
+    for graph in selected_graphs.get_all():
+        # Convert graph structure to executable LangGraph
+        compiled_graph = build_langgraph(graph.get_nodes(), graph.get_edges())
+        
+        graph_problem_scores = []
+        
+        # Evaluate on multiple problems
+        for problem_data in math_problems[:config.num_eval_problems]:
+            problem = problem_data["question"]
+            expected = problem_data["answer"]
+            
+            # Create initial state and execute graph
+            initial_state = {
+                "problem": [problem],
+                "scoped_knowledge": {"root": ScopedKnowledge(scope_id="root")},
+                "solution": None
+            }
+            
+            # Execute the multi-agent workflow
+            result = compiled_graph.invoke(initial_state)
+            
+            # Extract solution (prioritize Python_solver output)
+            llm_output = result.get('solution', '')
+            if not llm_output:
+                llm_output = extract_solution_from_scoped_knowledge(result)
+            
+            # Score the solution
+            score = _evaluate_answer(llm_output, expected, problem)
+            graph_problem_scores.append(score)
+        
+        # Average score across problems
+        graph.set_llm_score(np.mean(graph_problem_scores))
+    
+    return selected_graphs
+
+def _evaluate_answer(llm_output, expected_output, problem):
+    """Score with numerical relative error for partial credit"""
+    llm_num = extract_number(llm_output)
+    expected_num = extract_number(expected_output)
+    
+    if llm_num is not None and expected_num is not None:
+        if abs(llm_num - expected_num) < 1e-6:
+            return 1.0  # Exact match
+        # Relative error: 0.7 * min(a/b, b/a)
+        return 0.7 * min(llm_num / expected_num, expected_num / llm_num)
+    
+    # Fall back to string matching
+    if llm_output.lower() == expected_output.lower():
+        return 1.0
+    elif expected_output.lower() in llm_output.lower():
+        return 0.7
+    else:
+        return 0.0
+```
 
 ### Step 5: Data Update
 
 Evaluated graphs are added to the training dataset, which grows with each iteration. This dataset serves as the foundation for GNN training and improvement.
 
 **Dataset growth**: Starting from an initial seed set, the dataset grows by 10 graphs per iteration.
+
+**Code snippet:**
+
+```python
+def update_training_data(config, evaluation_results, training_dataset):
+    # Add evaluated graphs to training dataset
+    training_dataset.add_graphs(evaluation_results.get_all())
+    
+    # Persist to disk
+    save_training_dataset(training_dataset, config.data_dir)
+    
+    return training_dataset
+```
 
 ### Step 6: GNN Retraining
 
@@ -127,6 +393,25 @@ The GNN is retrained periodically (every N iterations) on the accumulated datase
 - Full retraining on all accumulated data
 - Same architecture and hyperparameters
 - Validation split for early stopping
+
+**Code snippet:**
+
+```python
+def retrain_gnn_model(config, training_dataset):
+    # Create fresh model instance
+    model = initialize_gnn_model(config)
+    
+    if training_dataset.size() == 0:
+        return model
+    
+    # Convert graphs to PyTorch Geometric format
+    train_data = training_dataset.to_pyg(config)
+    
+    # Train model on all accumulated data
+    loss = model.fit(train_data)
+    
+    return model
+```
 
 ---
 
