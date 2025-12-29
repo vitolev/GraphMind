@@ -25,7 +25,7 @@ eval_k_best: 2 # Number of graphs to evaluate after each iteration
 num_eval_problems: 1
 eval_timeout_seconds: 30
 #llm_model: gpt-4
-simulate_llm_evaluation: false  # Set to true to use deterministic graph-based scoring instead of actual LLM calls
+simulate_llm_evaluation: true  # Set to true to use deterministic graph-based scoring instead of actual LLM calls
 
 # LLM Provider Configuration
 # Options: "groq" (uses Groq API), "local" (uses HuggingFace transformers), or "ollama" (RECOMMENDED for speed)
