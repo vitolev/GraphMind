@@ -19,11 +19,6 @@ This project aims to efficiently explore the space of multi-agent LLM system top
 5. Repeats to progressively refine topology search
 
 ---
-## Current State of the Project (Project Milestone)
-
-In the following section, we will present current parts of the pipeline with current development status. Most part of the pipeline currently have some simple algorithms that are placeholders for advanced algorithms that we will implement in the following month until the end of the course. There will also be a recap of development status in Development Status section.
-
----
 
 ## Pipeline Architecture
 

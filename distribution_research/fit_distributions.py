@@ -241,46 +241,22 @@ def visualize_distributions(
     bin_width: float = 0.05
 ) -> None:
     """
-    Visualize histogram of scores with all distribution fits overlaid.
+    Visualize histogram of scores with Gaussian Mixture Model overlay.
     
     Args:
         scores: Array of scores
-        beta_params: Tuple of (alpha, beta) for Beta distribution
-        normal_params: Dictionary with 'mean' and 'std' for Normal distribution
-        gmm_params: Dictionary with GMM parameters (optional)
+        beta_params: Tuple of (alpha, beta) for Beta distribution (unused, kept for compatibility)
+        normal_params: Dictionary with 'mean' and 'std' for Normal distribution (unused, kept for compatibility)
+        gmm_params: Dictionary with GMM parameters (required)
         output_path: Path to save figure
         bin_width: Width of histogram bins (0.02 or 0.05)
     """
-    fig, ax = plt.subplots(figsize=(14, 8))
+    fig, ax = plt.subplots(figsize=(12, 8))
     
     # Create histogram
     bins = np.arange(0, 1.01, bin_width)
-    counts, bin_edges, patches = ax.hist(scores, bins=bins, alpha=0.6, edgecolor='black', 
-                                         label='Observed Scores', density=True, color='lightblue')
-    
-    # Prepare x-axis for PDFs
-    x = np.linspace(0.001, 0.999, 1000)
-    dx = x[1] - x[0]
-    
-    # Overlay Beta distribution
-    alpha, beta = beta_params
-    log_pdf = (alpha - 1) * np.log(x + 1e-10) + (beta - 1) * np.log(1 - x + 1e-10)
-    y_beta = np.exp(log_pdf - np.max(log_pdf))
-    area_beta = np.sum(y_beta) * dx
-    if area_beta > 0:
-        y_beta = y_beta / area_beta
-    ax.plot(x, y_beta, 'r-', linewidth=3, label=f'Beta(α={alpha:.2f}, β={beta:.2f})', alpha=0.7)
-    
-    # Overlay Normal distribution (truncated)
-    mean_norm = normal_params['mean']
-    std_norm = normal_params['std']
-    y_normal = np.exp(-0.5 * ((x - mean_norm) / std_norm)**2) / (std_norm * np.sqrt(2 * np.pi))
-    # Truncate to [0,1] and normalize
-    y_normal = np.clip(y_normal, 0, None)
-    area_normal = np.sum(y_normal) * dx
-    if area_normal > 0:
-        y_normal = y_normal / area_normal
-    ax.plot(x, y_normal, 'b--', linewidth=2, label=f'Normal(μ={mean_norm:.3f}, σ={std_norm:.3f})', alpha=0.7)
+    counts, bin_edges, patches = ax.hist(scores, bins=bins, alpha=0.7, edgecolor='black', 
+                                         label='Observed Scores', density=True, color='#8DA0CB')
     
     # Overlay Gaussian Mixture Model if provided
     if gmm_params and gmm_params.get('n_components') == 2:
@@ -288,11 +264,16 @@ def visualize_distributions(
         means = np.array(gmm_params['means'])
         stds = np.array(gmm_params['stds'])
         
+        x = np.linspace(0.001, 0.999, 1000)
+        dx = x[1] - x[0]
+        
         # Compute mixture PDF
         y_gmm = np.zeros_like(x)
         for k in range(2):
+            # Normal PDF for component k (truncated to [0,1])
             diff = x - means[k]
             component_pdf = weights[k] * np.exp(-0.5 * (diff / stds[k])**2) / (stds[k] * np.sqrt(2 * np.pi))
+            # Truncate and normalize
             component_pdf = np.clip(component_pdf, 0, None)
             y_gmm += component_pdf
         
@@ -309,34 +290,20 @@ def visualize_distributions(
             comp_area = np.sum(comp_pdf) * dx
             if comp_area > 0:
                 comp_pdf = comp_pdf / comp_area
-            ax.plot(x, comp_pdf, 'g--', linewidth=2, alpha=0.4, 
-                   label=f'GMM Comp {k+1}: N(μ={means[k]:.3f}, σ={stds[k]:.3f}), w={weights[k]:.2f}')
+            ax.plot(x, comp_pdf, '--', linewidth=2, alpha=0.6, 
+                   label=f'Component {k+1}: N(μ={means[k]:.3f}, σ={stds[k]:.3f}), w={weights[k]:.2f}',
+                   color=['#FC8D62', '#66C2A5'][k])
         
         # Plot mixture
-        ax.plot(x, y_gmm, 'g-', linewidth=3, label=f'GMM (2 components)', alpha=0.8)
+        ax.plot(x, y_gmm, 'g-', linewidth=3, label=f'GMM: w₁N(μ₁,σ₁) + w₂N(μ₂,σ₂)', alpha=0.9, color='#1F77B4')
     
-    ax.set_xlabel('Score', fontsize=14)
-    ax.set_ylabel('Density', fontsize=14)
-    ax.set_title('Distribution of Random Agent System Scores\nBeta, Normal, and Gaussian Mixture Model Fits', 
+    ax.set_xlabel('Score', fontsize=14, fontweight='bold')
+    ax.set_ylabel('Density', fontsize=14, fontweight='bold')
+    ax.set_title('Distribution of Random Agent System Scores\nGaussian Mixture Model (2 components)', 
                 fontsize=16, fontweight='bold')
-    ax.legend(fontsize=11, loc='best')
+    ax.legend(fontsize=12, loc='upper right')
     ax.grid(True, alpha=0.3)
     ax.set_xlim([0, 1])
-    
-    # Add statistics text
-    mean_beta = alpha / (alpha + beta)
-    var_beta = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1))
-    stats_text = f'Beta: μ={mean_beta:.4f}, σ={np.sqrt(var_beta):.4f}\n'
-    stats_text += f'Normal: μ={mean_norm:.4f}, σ={std_norm:.4f}\n'
-    
-    if gmm_params:
-        stats_text += f'GMM: μ={gmm_params["overall_mean"]:.4f}, σ={gmm_params["overall_std"]:.4f}\n'
-        stats_text += f'  Comp1: μ={gmm_params["means"][0]:.3f}, σ={gmm_params["stds"][0]:.3f}, w={gmm_params["weights"][0]:.2f}\n'
-        stats_text += f'  Comp2: μ={gmm_params["means"][1]:.3f}, σ={gmm_params["stds"][1]:.3f}, w={gmm_params["weights"][1]:.2f}'
-    
-    ax.text(0.65, 0.65, stats_text, transform=ax.transAxes, fontsize=10,
-           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
-           verticalalignment='top')
     
     plt.tight_layout()
     if output_path:
@@ -375,27 +342,7 @@ def main():
     
     scores_array = np.array(graph_average_scores)
     
-    # Fit Beta distribution
-    logger.info(f"\nFitting Beta distribution...")
-    alpha, beta = fit_beta_bayesian(scores_array, prior_alpha=1.0, prior_beta=1.0)
-    mean_beta = alpha / (alpha + beta)
-    var_beta = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1))
-    
-    logger.info(f"Beta Distribution Parameters:")
-    logger.info(f"  α (alpha): {alpha:.4f}")
-    logger.info(f"  β (beta): {beta:.4f}")
-    logger.info(f"  Mean: {mean_beta:.4f}")
-    logger.info(f"  Std: {np.sqrt(var_beta):.4f}")
-    
-    # Fit Normal distribution
-    logger.info(f"\nFitting Normal distribution...")
-    logger.info(f"  Note: Normal distribution is not ideal for bounded [0,1] data, but included for comparison.")
-    normal_params = fit_normal_distribution(scores_array)
-    logger.info(f"Normal Distribution Parameters:")
-    logger.info(f"  Mean: {normal_params['mean']:.4f}")
-    logger.info(f"  Std: {normal_params['std']:.4f}")
-    
-    # Fit Gaussian Mixture Model
+    # Fit Gaussian Mixture Model (2 components) - only model we're using
     logger.info(f"\nFitting Gaussian Mixture Model (2 components)...")
     logger.info(f"  Justification: Random graphs may form two populations:")
     logger.info(f"    - Well-structured graphs (with Solver, proper flow) → higher scores")
@@ -409,20 +356,19 @@ def main():
         logger.info(f"  Component 2: μ={gmm_params['means'][1]:.4f}, σ={gmm_params['stds'][1]:.4f}, weight={gmm_params['weights'][1]:.4f}")
         logger.info(f"  Overall Mean: {gmm_params['overall_mean']:.4f}")
         logger.info(f"  Overall Std: {gmm_params['overall_std']:.4f}")
+        logger.info(f"\n  Distribution equation: f(x) = w₁·N(μ₁,σ₁) + w₂·N(μ₂,σ₂)")
+        logger.info(f"    where w₁={gmm_params['weights'][0]:.4f}, μ₁={gmm_params['means'][0]:.4f}, σ₁={gmm_params['stds'][0]:.4f}")
+        logger.info(f"    and   w₂={gmm_params['weights'][1]:.4f}, μ₂={gmm_params['means'][1]:.4f}, σ₂={gmm_params['stds'][1]:.4f}")
     else:
         logger.warning("⚠️  Could not fit GMM (insufficient data)")
         gmm_params = None
     
-    # Save distribution parameters
+    # Dummy parameters for compatibility with visualize_distributions signature
+    alpha, beta = 1.0, 1.0
+    normal_params = {'mean': 0.5, 'std': 0.2}
+    
+    # Save distribution parameters (only GMM now)
     dist_params = {
-        'beta': {
-            'alpha': float(alpha),
-            'beta': float(beta),
-            'mean': float(mean_beta),
-            'std': float(np.sqrt(var_beta)),
-            'variance': float(var_beta)
-        },
-        'normal': normal_params,
         'gmm': gmm_params if gmm_params else None,
         'num_samples': len(graph_average_scores),
         'num_graphs': len(df)
