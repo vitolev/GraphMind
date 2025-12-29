@@ -1,3 +1,0 @@
-Experiment according to config.
-Combination of both v2 and v3. There is an initial training set of 10 samples (produced with the same config) and good graph set is capped at 10,
-so no old graphs flow from one iteration to another.

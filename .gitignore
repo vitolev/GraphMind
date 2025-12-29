@@ -238,7 +238,4 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Datafolder for now
-data/
-
 graphmind-venv/
