@@ -128,11 +128,6 @@ All steps output metrics dictionaries containing:
 - `create_metrics_dataframe()` - creates DataFrame from all iterations
 - `compute_iteration_summary()` - computes aggregate statistics
 
-All of the data from the loops is saved in DataFrame and can be analyzed. After first experiments, we already got some of the basic visualizations:
-
-![Pipeline Architecture](./metric_trends.png)
-
-
 ---
 
 ## How to Run

@@ -5,21 +5,6 @@ from pathlib import Path
 
 
 def flatten_metrics_dict(metrics_dict: Dict[str, Any], prefix: str = '') -> Dict[str, Any]:
-    """
-    Flatten nested metrics dictionary into a single level.
-    
-    Example:
-        {'step_1_generation': {'duration_seconds': 1.5, 'num_samples': 100}}
-        becomes:
-        {'step_1_generation_duration_seconds': 1.5, 'step_1_generation_num_samples': 100}
-    
-    Args:
-        metrics_dict: Nested metrics dictionary
-        prefix: Prefix for flattened keys
-    
-    Returns:
-        Flattened dictionary
-    """
     flattened = {}
     
     for key, value in metrics_dict.items():
@@ -45,18 +30,6 @@ def create_metrics_dataframe(
     logger: logging.Logger,
     selected_metrics: List[str] = None
 ) -> pd.DataFrame:
-    """
-    Convert nested metrics history into a flattened pandas DataFrame.
-    
-    Args:
-        metrics_history: List of iteration metrics dicts
-        config: Configuration object
-        logger: Logger instance
-        selected_metrics: Optional list of metric keys to include. If None, includes all.
-    
-    Returns:
-        Pandas DataFrame with one row per iteration
-    """
     
     # Flatten each iteration's metrics
     flattened_records = []
@@ -87,18 +60,6 @@ def save_metrics_dataframe(
     logger: logging.Logger,
     filename: str = 'pipeline_metrics.csv'
 ) -> Path:
-    """
-    Save metrics dataframe to CSV file.
-    
-    Args:
-        df: Metrics dataframe
-        output_dir: Directory to save to
-        logger: Logger instance
-        filename: Output filename
-    
-    Returns:
-        Path to saved file
-    """
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / filename
     
@@ -108,44 +69,10 @@ def save_metrics_dataframe(
     return output_path
 
 
-def get_metric_by_iteration(
-    df: pd.DataFrame,
-    metric_name: str,
-    logger: logging.Logger
-) -> pd.Series:
-    """
-    Get a specific metric across all iterations.
-    
-    Args:
-        df: Metrics dataframe
-        metric_name: Name of metric to retrieve
-        logger: Logger instance
-    
-    Returns:
-        Pandas Series with metric values per iteration
-    """
-    if metric_name not in df.columns:
-        available = [col for col in df.columns if metric_name.lower() in col.lower()]
-        logger.warning(f"Metric '{metric_name}' not found. Similar metrics: {available}")
-        return None
-    
-    return df[metric_name]
-
-
 def compute_iteration_summary(
     df: pd.DataFrame,
     logger: logging.Logger
 ) -> Dict[str, Any]:
-    """
-    Compute summary statistics across all iterations.
-    
-    Args:
-        df: Metrics dataframe
-        logger: Logger instance
-    
-    Returns:
-        Dictionary with summary statistics
-    """
     summary = {
         'total_iterations': len(df),
         'total_graphs_generated': int(df['loop_total_graphs_generated'].sum()) if 'loop_total_graphs_generated' in df.columns else 0,

@@ -1,12 +1,3 @@
-"""
-Diagnostic tools for analyzing training data and experiment results.
-
-This module provides functions to:
-- Load training dataset
-- Visualize predictions vs actual scores
-- Show best performing graphs
-- Generate diagnostic reports
-"""
 
 import logging
 import numpy as np
@@ -17,7 +8,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 from config.settings import Config
 from data_management.graph_storage import load_training_dataset, Graph, GraphSet
-# Note: build_langgraph not needed for diagnostics - removed import
 
 
 def visualize_predictions_vs_actual(
@@ -26,18 +16,6 @@ def visualize_predictions_vs_actual(
     logger: logging.Logger,
     top_n: int = 20
 ) -> Path:
-    """
-    Create visualization comparing GNN predictions vs LLM actual scores.
-    
-    Args:
-        training_dataset: GraphSet containing training data
-        output_dir: Directory to save visualizations
-        logger: Logger instance
-        top_n: Number of top graphs to highlight
-    
-    Returns:
-        Path to saved figure
-    """
     output_dir.mkdir(parents=True, exist_ok=True)
     
     graphs = training_dataset.get_all()
@@ -159,15 +137,6 @@ def visualize_graph_structure(
     title: Optional[str] = None,
     show_scores: bool = True
 ) -> None:
-    """
-    Visualize a single graph structure.
-    
-    Args:
-        graph: Graph object to visualize
-        output_path: Path to save the figure
-        title: Optional title for the plot
-        show_scores: Whether to show GNN and LLM scores in title
-    """
     G = nx.DiGraph()
     
     # Add nodes with labels
@@ -237,18 +206,6 @@ def visualize_best_graphs(
     logger: logging.Logger,
     top_n: int = 10
 ) -> List[Path]:
-    """
-    Visualize the top N best performing graphs.
-    
-    Args:
-        training_dataset: GraphSet containing training data
-        output_dir: Directory to save visualizations
-        logger: Logger instance
-        top_n: Number of top graphs to visualize
-    
-    Returns:
-        List of paths to saved figures
-    """
     output_dir.mkdir(parents=True, exist_ok=True)
     graphs_dir = output_dir / "best_graphs"
     graphs_dir.mkdir(parents=True, exist_ok=True)
@@ -283,18 +240,6 @@ def visualize_rmse_trends(
     output_dir: Path,
     logger: logging.Logger
 ) -> Path:
-    """
-    Visualize RMSE trends over iterations from all_iterations_data.csv.
-    Creates blog-post ready visualizations showing how RMSE decreases over time.
-    
-    Args:
-        config: Configuration object
-        output_dir: Directory to save visualizations
-        logger: Logger instance
-    
-    Returns:
-        Path to saved figure
-    """
     import matplotlib.pyplot as plt
     
     # Set style for blog-post quality
@@ -442,23 +387,6 @@ def create_diagnostic_report(
     logger: Optional[logging.Logger] = None,
     top_n_graphs: int = 10
 ) -> Path:
-    """
-    Create a comprehensive diagnostic report for the experiment.
-    
-    This function:
-    1. Loads the training dataset
-    2. Creates predictions vs actual visualization
-    3. Visualizes top performing graphs
-    4. Saves all outputs to the experiment's analytics directory
-    
-    Args:
-        config: Configuration object
-        logger: Optional logger instance
-        top_n_graphs: Number of top graphs to visualize
-    
-    Returns:
-        Path to the diagnostics output directory
-    """
     if logger is None:
         import logging
         logger = logging.getLogger(__name__)
@@ -525,12 +453,6 @@ def create_diagnostic_report(
 
 
 if __name__ == "__main__":
-    """
-    Run diagnostics from command line.
-    
-    Usage:
-        python -m post_processing.diagnostics
-    """
     import logging
     from config.settings import Config
     

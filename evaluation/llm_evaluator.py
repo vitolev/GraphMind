@@ -12,23 +12,6 @@ from data_management.graph_storage import GraphSet
 
 
 def _calculate_deterministic_graph_score(nodes: List[Tuple[int, str]], edges: List[Tuple[int, int]]) -> float:
-    """
-    Calculate a deterministic score based on graph structure.
-    
-    Scoring rules (designed to be learnable by GNN, with normal-like distribution):
-    - Base score: 0.3 (centered around middle)
-    - +0.25 for up to 2 Solver nodes (max +0.5 from solvers)
-    - +0.15 bonus if Python_solver directly precedes Solver (edge exists)
-    - +0.1 for each Combine_all node (max 1, so +0.1)
-    - +0.08 for each Validator node (max 1, so +0.08)
-    - +0.05 for each Extract_topic node (max 1, so +0.05)
-    - +0.1 if graph has at least one Solver at the end
-    - -0.1 if no Solver nodes exist
-    - -0.05 for each excessive node (>10 nodes total)
-    
-    Then add deterministic variance based on graph structure hash to create normal-like distribution.
-    Returns score in range [0.0, 1.0]
-    """
     # Build helper structures
     node_dict = {nid: ntype for nid, ntype in nodes}
     graph_out = {}
@@ -133,25 +116,11 @@ def _evaluate_answer(
     problem: str,
     logger: logging.Logger
 ) -> float:
-    """
-    Evaluate LLM output against expected output.
-    
-    Returns a score between 0.0 and 1.0:
-    - 1.0: Exact match (case-insensitive)
-    - 0.7 * min(a/b, b/a): Numerical relative error (when both are numeric)
-    - 0.7: Contains expected answer
-    - 0.5: Partial match
-    - 0.0: No match
-    """
     
     llm_output_lower = llm_output.lower().strip()
     expected_lower = expected_output.lower().strip()
     
-    # First, try to extract numerical values from both outputs
     def extract_number(text: str) -> Optional[float]:
-        """Extract first number from text, handling integers and floats."""
-        # Try to find a number (integer or float)
-        # Patterns: "30", "32.5", "-10", "1e5", etc.
         patterns = [
             r'-?\d+\.\d+',  # Float
             r'-?\d+',        # Integer
@@ -169,16 +138,13 @@ def _evaluate_answer(
     llm_num = extract_number(llm_output)
     expected_num = extract_number(expected_output)
     
-    # If both are numerical, use relative error scoring
     if llm_num is not None and expected_num is not None and expected_num != 0:
-        # Compute relative error: 0.7 * min(a/b, b/a)
         ratio1 = abs(llm_num / expected_num) if expected_num != 0 else 0
         ratio2 = abs(expected_num / llm_num) if llm_num != 0 else 0
         relative_score = min(ratio1, ratio2)
         score = 0.7 * relative_score
         
-        # Exact numerical match gets full score
-        if abs(llm_num - expected_num) < 1e-6:  # Very close to zero difference
+        if abs(llm_num - expected_num) < 1e-6:
             score = 1.0
             match_type = "EXACT_NUMERICAL_MATCH"
         else:
@@ -194,23 +160,15 @@ def _evaluate_answer(
         
         return score
     
-    # Fall back to string matching for non-numerical answers
-    # Exact match
     if llm_output_lower == expected_lower:
         score = 1.0
         match_type = "EXACT_MATCH"
-    
-    # Contains expected answer
     elif expected_lower in llm_output_lower:
         score = 0.7
         match_type = "CONTAINS"
-    
-    # Expected answer appears as word boundary
     elif any(word in llm_output_lower.split() for word in expected_lower.split()):
         score = 0.5
         match_type = "PARTIAL_WORD_MATCH"
-    
-    # No match
     else:
         score = 0.0
         match_type = "NO_MATCH"
@@ -255,7 +213,6 @@ def evaluate_selected_graphs(
     if simulate:
         logger.info("🎯 SIMULATED LLM EVALUATION MODE: Using deterministic graph-based scoring")
     else:
-        # Set LLM provider only if not simulating
         set_llm_provider(
             provider=getattr(config, 'llm_provider', 'groq'),
             local_model=getattr(config, 'local_llm_model', 'microsoft/Phi-3-mini-4k-instruct'),
@@ -304,19 +261,15 @@ def evaluate_selected_graphs(
                 
                 logger.info(f"  📊 Simulated score: {base_score:.4f} (deterministic, same for all {num_problems_to_eval} problems)")
             else:
-                # REAL MODE: Actual LLM evaluation
-                # DEBUG: Check math_problems
                 logger.debug(f"math_problems type: {type(math_problems)}, length: {len(math_problems) if math_problems else 0}")
                 logger.debug(f"math_problems: {math_problems}")
                 
-                # Build LangGraph from structure
                 compiled_graph = build_langgraph(graph.get_nodes(), graph.get_edges())
                 
                 graph_problem_scores = []
                 graph_execution_times = []
-                problem_match_types = []  # Track match types for each problem
+                problem_match_types = []
                 
-                # Run on each problem (use config value, not hardcoded)
                 problems_to_evaluate = math_problems[:num_problems_to_eval]
                 for prob_idx, problem_data in enumerate(problems_to_evaluate):
                     problem = problem_data["question"]
@@ -346,20 +299,13 @@ def evaluate_selected_graphs(
                         result = compiled_graph.invoke(initial_state)
                         execution_time = time.time() - exec_start
                         
-                        # Extract solution - check multiple sources in priority order:
-                        # 1. Combine_all final solution (from state['solution'])
-                        # 2. Python_solver output (high priority for numerical problems)
-                        # 3. Solver outputs from scoped knowledge (if no Combine_all)
-                        
                         llm_output = result.get('solution', '')
                         
-                        # If no solution from Combine_all, search scoped knowledge
                         if not llm_output or llm_output.strip() == '':
                             scoped_knowledge = result.get('scoped_knowledge', {})
                             
-                            # Priority 1: Python_solver output (highest priority for successful execution)
                             python_output = None
-                            solver_outputs = []  # Collect all Solver outputs
+                            solver_outputs = []
                             
                             graph_structure = result.get('graph_structure')
                             if graph_structure:
@@ -374,14 +320,11 @@ def evaluate_selected_graphs(
                                         node_data_str = str(node_data)
                                         node_type = node_types.get(node_id, "unknown")
                                         
-                                        # Check for Python_solver output (prioritize this)
                                         if node_type == "Python_solver":
                                             python_match = re.search(r'<PYTHON_OUTPUT>(.*?)</PYTHON_OUTPUT>', node_data_str, re.DOTALL)
                                             if python_match and 'ERROR' not in python_match.group(1):
                                                 python_output = python_match.group(1).strip()
                                                 logger.debug(f"  Found Python_solver output: {python_output[:100]}...")
-                                        
-                                        # Check for Solver outputs
                                         elif node_type == "Solver":
                                             solver_match = re.search(r'<SOLVER_OUTPUT>(.*?)</SOLVER_OUTPUT>', node_data_str, re.DOTALL)
                                             if solver_match:
@@ -389,19 +332,14 @@ def evaluate_selected_graphs(
                                                 solver_outputs.append(solver_output)
                                                 logger.debug(f"  Found Solver-{node_id} output: {solver_output[:100]}...")
                             
-                            # Use Python_solver output if available (highest priority)
                             if python_output:
                                 llm_output = python_output
                                 logger.debug(f"  ✓ Using Python_solver output as solution (priority)")
-                            # Otherwise, use first Solver output if available
                             elif solver_outputs:
                                 llm_output = solver_outputs[0]
                                 logger.debug(f"  ✓ Using Solver output as solution (found {len(solver_outputs)} solver(s))")
                         
-                        # Evaluate answer
                         score = _evaluate_answer(llm_output, expected, problem, logger)
-                        
-                        # Determine match type for tracking
                         match_type = "EXACT_MATCH" if score == 1.0 else "CONTAINS" if score == 0.7 else "PARTIAL" if score == 0.5 else "NO_MATCH"
                         problem_match_types.append(match_type)
                         
@@ -416,26 +354,22 @@ def evaluate_selected_graphs(
                     
                     logger.debug(f"  [{prob_idx + 1}/{num_problems_to_eval}] → {score:.2f}\n")
             
-            # Calculate per-graph statistics
             graph_llm_score = float(np.mean(graph_problem_scores)) if graph_problem_scores else 0.0
             graph_llm_std = float(np.std(graph_problem_scores)) if graph_problem_scores else 0.0
             graph_llm_variance = float(np.var(graph_problem_scores)) if graph_problem_scores else 0.0
             avg_execution_time = float(np.mean(graph_execution_times)) if graph_execution_times else 0.0
             graph_gnn_score = graph.get_gnn_score()
             
-            # Count problem outcomes
             num_perfect = sum(1 for s in graph_problem_scores if s == 1.0)
             num_partial = sum(1 for s in graph_problem_scores if 0.0 < s < 1.0)
             num_failed = sum(1 for s in graph_problem_scores if s == 0.0)
             
-            # Calculate prediction error
             gnn_llm_error = abs(graph_gnn_score - graph_llm_score)
             
             graph.set_llm_score(graph_llm_score, time=avg_execution_time)
             scores.append(graph_llm_score)
             gnn_scores.append(graph_gnn_score)
             
-            # Store detailed per-graph metrics
             per_graph_metrics.append({
                 'gnn_predicted_score': graph_gnn_score,
                 'llm_average_score': graph_llm_score,
@@ -446,7 +380,7 @@ def evaluate_selected_graphs(
                 'num_perfect_scores': num_perfect,
                 'num_partial_scores': num_partial,
                 'num_failed_scores': num_failed,
-                'problem_scores': graph_problem_scores,  # For visualization
+                'problem_scores': graph_problem_scores,
                 'avg_execution_time': avg_execution_time
             })
             
@@ -464,7 +398,6 @@ def evaluate_selected_graphs(
             graph.set_llm_score(0.0, time=0.0)
             scores.append(0.0)
             gnn_scores.append(graph.get_gnn_score())
-            # Add error entry to per_graph_metrics
             per_graph_metrics.append({
                 'gnn_predicted_score': graph.get_gnn_score(),
                 'llm_average_score': 0.0,
@@ -486,7 +419,6 @@ def evaluate_selected_graphs(
     scores_array = np.array(scores)
     gnn_scores_array = np.array(gnn_scores)
     
-    # Compute aggregate prediction metrics
     if len(scores_array) == len(gnn_scores_array) and len(scores_array) > 0:
         rmse = float(np.sqrt(np.mean((scores_array - gnn_scores_array) ** 2)))
         mae = float(np.mean(np.abs(scores_array - gnn_scores_array)))
@@ -501,18 +433,14 @@ def evaluate_selected_graphs(
         mae = None
         correlation = None
     
-    # Aggregate variance metrics (mean variance across all graphs)
     graph_variances = [m['llm_variance'] for m in per_graph_metrics if 'llm_variance' in m]
     mean_variance_across_graphs = float(np.mean(graph_variances)) if graph_variances else None
     mean_std_across_graphs = float(np.mean([m['llm_std'] for m in per_graph_metrics if 'llm_std' in m])) if per_graph_metrics else None
     
-    # Aggregate success metrics
     total_perfect = sum(m.get('num_perfect_scores', 0) for m in per_graph_metrics)
     total_partial = sum(m.get('num_partial_scores', 0) for m in per_graph_metrics)
     total_failed = sum(m.get('num_failed_scores', 0) for m in per_graph_metrics)
     total_problems_evaluated = sum(m.get('num_problems_evaluated', 0) for m in per_graph_metrics)
-    
-    # Calculate actual number of evaluations (not theoretical)
     actual_num_evaluations = total_problems_evaluated
 
     metrics = {
@@ -521,7 +449,7 @@ def evaluate_selected_graphs(
         'num_graphs': num_graphs,
         'num_problems_available': len(math_problems) if math_problems else 0,
         'num_problems_per_graph': num_problems_to_eval,
-        'num_evaluations': actual_num_evaluations,  # Actual, not theoretical
+        'num_evaluations': actual_num_evaluations,
         'best_evaluated': float(scores_array.max()) if len(scores_array) > 0 else None,
         'worst_evaluated': float(scores_array.min()) if len(scores_array) > 0 else None,
         'mean_evaluated': float(scores_array.mean()) if len(scores_array) > 0 else None,
@@ -531,20 +459,16 @@ def evaluate_selected_graphs(
         'rmse_gnn_vs_llm': rmse,
         'mae_gnn_vs_llm': mae,
         'correlation_gnn_llm': correlation,
-        'mean_absolute_error_per_graph': mae,  # Same as mae, for consistency
+        'mean_absolute_error_per_graph': mae,
         
-        # Variance/consistency metrics
         'mean_variance_across_graphs': mean_variance_across_graphs,
         'mean_std_across_graphs': mean_std_across_graphs,
         
-        # Success rate metrics
         'total_perfect_scores': total_perfect,
         'total_partial_scores': total_partial,
         'total_failed_scores': total_failed,
         'success_rate_perfect': total_perfect / total_problems_evaluated if total_problems_evaluated > 0 else 0.0,
         'success_rate_any': (total_perfect + total_partial) / total_problems_evaluated if total_problems_evaluated > 0 else 0.0,
-        
-        # Per-graph details (for detailed analysis/visualization)
         'per_graph_metrics': per_graph_metrics,
         
         'metadata': {
@@ -554,8 +478,7 @@ def evaluate_selected_graphs(
             'problem_categories': list(set([p.get("category", "unknown") for p in math_problems])) if math_problems else []
         }
     }
-
-    # Format optional metrics safely
+    
     rmse_str = f"{metrics['rmse_gnn_vs_llm']:.4f}" if metrics['rmse_gnn_vs_llm'] is not None else "N/A"
     mae_str = f"{metrics['mae_gnn_vs_llm']:.4f}" if metrics['mae_gnn_vs_llm'] is not None else "N/A"
     corr_str = f"{metrics['correlation_gnn_llm']:.4f}" if metrics['correlation_gnn_llm'] is not None else "N/A"

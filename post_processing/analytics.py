@@ -6,12 +6,6 @@ from post_processing.metrics_aggregator import save_metrics_dataframe, compute_i
 
 
 def run_analytics(metrics_df: pd.DataFrame, config: Config, logger: logging.Logger) -> None:
-    """
-    Run post-processing analysis based on config settings.
-    
-    Creates subdirectories and files based on what's enabled in config.
-    All outputs are saved to logs/analytics/{experiment_name}/ folder.
-    """
     
     # Use experiment-specific directory for all analytics outputs
     analytics_dir = config.analytics_dir / config.experiment_name
@@ -26,11 +20,6 @@ def run_analytics(metrics_df: pd.DataFrame, config: Config, logger: logging.Logg
     summary = compute_iteration_summary(metrics_df, logger)
 
     plot_pipeline_metrics(metrics_df, analytics_dir, logger)
-    # TODO: Add visualization functions here based on config
-    # if config.generate_plots:
-    #     generate_plots(metrics_df, analytics_dir, logger)
-    # if config.generate_report:
-    #     generate_report(metrics_df, summary, analytics_dir, logger)
 
 
 import matplotlib.pyplot as plt

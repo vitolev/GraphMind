@@ -37,15 +37,6 @@ def create_directories(config: Config) -> None:
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
 def main():
-    """
-    Main entry point
-    
-    Flow:
-    1. Load configuration from YAML
-    2. Set up logging
-    3. Create directories
-    4. Run pipeline with config
-    """
     # Load config
     config_path = Path("config/experiment_config.yaml")
     

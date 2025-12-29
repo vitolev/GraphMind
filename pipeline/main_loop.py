@@ -29,12 +29,6 @@ def _save_iteration_metrics(
     config: Config,
     logger: logging.Logger
 ) -> Path:
-    """
-    Save raw metrics data for a single iteration to CSV, appending to cumulative file.
-    
-    Saves to: logs/analytics/{experiment_name}/all_iterations_data.csv
-    Creates/updates a single CSV file with all iterations for easy post-processing.
-    """
     # Create directory structure
     experiment_dir = config.analytics_dir / config.experiment_name
     experiment_dir.mkdir(parents=True, exist_ok=True)
@@ -108,7 +102,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     
     model = initialize_gnn_model(config, logger)
     
-    training_dataset = load_training_dataset(config.data_dir, logger) # This is GraphSet object that stores training data
+    training_dataset = load_training_dataset(config.data_dir, logger)
     state.training_dataset_size = training_dataset.size()
 
     if state.training_dataset_size > 0:
@@ -120,7 +114,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     
     math_problems = load_math_problems(config, logger)
     
-    good_graphs_set = load_good_graphs_set(config.data_dir, logger) # This is a GraphSet object that stores all the potential Graph objects
+    good_graphs_set = load_good_graphs_set(config.data_dir, logger)
     
     logger.info(f"{'='*60}")
     logger.info("Configuration:")
@@ -181,13 +175,6 @@ def run_single_iteration(
     training_dataset: GraphSet,
     math_problems: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
-    """
-    IDEA for this part: maybe every step should have an output of a dict metrics["step_name"] = { ... },
-    at the end of the look, we also call function evaluate_loop and we get the loop
-    metrics metrics["loop"] = { ... } and we merge them all in the metrics dataclass
-
-    For this, we will have to change the dataclass and the return type accordingly.
-    """
 
     from graph_generation.graph_generation import generate_graph_batch
     from gnn_models.model_manager import predict_batch_performance, retrain_gnn_model
@@ -199,14 +186,13 @@ def run_single_iteration(
     logger.info(f"  ✅ Generated {generated_graphs.size()} graphs")
     
     logger.info(f"\n[Step 2/6] Running GNN predictions on all graphs...")
-    metrics2, predictions = predict_batch_performance(config, logger, model, generated_graphs) # Input is list of Graph objects GraphSet.to_pyg() will be used to predict This function updates GraphSet objects to have paramets gnn_predic set
+    metrics2, predictions = predict_batch_performance(config, logger, model, generated_graphs)
     best_predicted = metrics2['best_predicted']
     logger.info(f"  ✅ Predictions complete")
     logger.info(f"  ✅ Best predicted score: {best_predicted:.4f}")
     
     logger.info(f"\n[Step 3/6] Selecting top {config.eval_k_best} graphs for evaluation...")
-    metrics3, selected_graphs = select_top_graphs(config, logger, good_graphs_set, predictions) 
-    # ATTENTION: check if good_graphs_set is changing throughout the iterations if something is going wrong
+    metrics3, selected_graphs = select_top_graphs(config, logger, good_graphs_set, predictions)
     logger.info(f"  ✅ Selected {selected_graphs.size()} graphs")
     logger.info(f"  ✅ Good graphs set size: {good_graphs_set.size()}")
     
@@ -217,13 +203,13 @@ def run_single_iteration(
     logger.info(f"  ✅ Best actual score: {best_actual:.4f}")
     
     logger.info(f"\n[Step 5/6] Updating training dataset...")
-    metrics5 = update_training_data(config, logger, evaluation_results, training_dataset) #To je graphset
+    metrics5 = update_training_data(config, logger, evaluation_results, training_dataset)
     logger.info(f"  ✅ Added {metrics5['num_training_samples_added']} samples to training data")
     logger.info(f"  ✅ Training dataset size: {metrics5['total_training_dataset_size']}")
     
     retrain_loss = None
     logger.info(f"\n[Step 6/6] Retraining GNN models...")
-    metrics6, model = retrain_gnn_model(config, logger, training_dataset) # Correct this to be the right data
+    metrics6, model = retrain_gnn_model(config, logger, training_dataset)
     logger.info(f"  ✅ GNN retrained")
 
     iteration_metrics = {

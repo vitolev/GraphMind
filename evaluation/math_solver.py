@@ -15,22 +15,6 @@ def load_math_problems(
     config,
     logger: logging.Logger
 ) -> List[Dict[str, Any]]:
-    """
-    Load math problems dataset
-    
-    Args:
-        config: Configuration object with num_eval_problems, problem_difficulties
-        logger: Logger
-    
-    Returns:
-        List of math problem dictionaries
-        Each problem:
-        {
-            'id': str,
-            'question': str,
-            'answer': str,
-        }
-    """
     
     logger.info(f"Loading {config.num_eval_problems} math problems...")
     
