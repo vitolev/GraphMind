@@ -1,5 +1,0 @@
-Experiment according to config present here. 
-There were no initial training/good graphs set, which results in "false" initial jump and gradual decrease of RMSE. 
-This is because in first iteration when first 1000 good graph set is created the predictions are random, meaning that on generated batch of 10000 elements top 1000 will have approx. 0.9 predicted accuracy. 
-In future iterations these old "wrong" graphs persist, giving much higher RMSE, because GNN when trained predicts at most 0.65, meaning that the initial graphs from first iteration persist on top of the good graph set,
-until iteration num 100, when the last one graph from the first random iteration is removed.

@@ -1,8 +1,8 @@
 # Graph Generation
 num_graphs_per_iteration: 200000
 generation_strategy: random
-max_nodes: 5
-max_depth: 2
+max_nodes: 10
+max_depth: 3
 
 gnn_model_type: gat
 data_format: Data
@@ -22,10 +22,10 @@ top_k_to_keep: 3 # Number of graphs to keep after each iteration should be small
 eval_k_best: 2 # Number of graphs to evaluate after each iteration
 
 # Evaluation
-num_eval_problems: 1
+num_eval_problems: 5
 eval_timeout_seconds: 30
 #llm_model: gpt-4
-simulate_llm_evaluation: false  # Set to true to use deterministic graph-based scoring instead of actual LLM calls
+simulate_llm_evaluation: true  # Set to true to use deterministic graph-based scoring instead of actual LLM calls
 
 # LLM Provider Configuration
 # Options: "groq" (uses Groq API), "local" (uses HuggingFace transformers), or "ollama" (RECOMMENDED for speed)
@@ -42,7 +42,7 @@ local_llm_model: TinyLlama/TinyLlama-1.1B-Chat-v1.0  # ~0.5-1 sec/call, decent f
 local_llm_device: auto  # Options: "auto" (detects CUDA/MPS), "cuda", "mps" (Apple Silicon), "cpu"
 
 # Pipeline Control
-max_iterations: 2
+max_iterations: 5
 checkpoint_frequency: 5
 
 # Paths
