@@ -19,7 +19,7 @@
 \definecolor{gnnorange}{RGB}{255,140,0}
 
 % Title page information
-\title{GraphMind: Efficiently Exploring Multi-Agent LLM Topologies with Graph Neural Networks}
+\title[GraphMind: Multi-Agent LLM Topologies]{GraphMind: Efficiently Exploring Multi-Agent LLM Topologies with Graph Neural Networks}
 \author{Vito Levstik and Gal Zmazek}
 \institute{University of Ljubljana}
 \date{\today}
@@ -98,7 +98,7 @@
 % Slide 3: Multi-Agent System Overview
 \begin{frame}{Multi-Agent System for Mathematical Problem Solving}
     \begin{columns}[T]
-        \begin{column}{0.45\textwidth}
+        \begin{column}{0.55\textwidth}
             \textbf{8 Specialized Agent Types:}
             \begin{itemize}
                 \item \textcolor{blue}{Solver}: Generate solutions
@@ -114,7 +114,7 @@
             \vspace{0.3cm}
             \small Task: Solve math problems from NVIDIA OpenMathInstruct-1 dataset
         \end{column}
-        \begin{column}{0.55\textwidth}
+        \begin{column}{0.45\textwidth}
             \begin{tikzpicture}[
                 node/.style={rectangle, draw, rounded corners, minimum width=2cm, minimum height=0.6cm, align=center, font=\tiny},
                 scale=0.85, transform shape
@@ -143,7 +143,6 @@
                 \draw[->, thick] (valid) -- node[left, font=\tiny] {NO} (solver_retry);
                 \draw[->, thick] (solver_retry) -- (end);
             \end{tikzpicture}
-            \centerline{\small GraphMind}
         \end{column}
     \end{columns}
     
@@ -214,34 +213,34 @@
             \end{itemize}
         \end{column}
         \begin{column}{0.5\textwidth}
-            \begin{tikzpicture}[scale=0.7]
-                \node[draw, circle, fill=blue!20, font=\tiny] (s) at (3,5) {START};
-                \node[draw, rectangle, fill=green!20, font=\tiny] (d) at (3,4) {Decompose\_3};
-                \node[draw, rectangle, fill=orange!20, font=\tiny] (s1) at (1,3) {Solver};
-                \node[draw, rectangle, fill=orange!20, font=\tiny] (s2) at (3,3) {Python};
-                \node[draw, rectangle, fill=orange!20, font=\tiny] (s3) at (5,3) {Solver};
-                \node[draw, rectangle, fill=purple!20, font=\tiny] (c) at (3,2) {Combine};
-                \node[draw, rectangle, fill=yellow!20, font=\tiny] (v) at (3,1) {Validator};
-                \node[draw, rectangle, fill=orange!20, font=\tiny] (sr) at (1.5,0) {Solver};
-                \node[draw, circle, fill=blue!20, font=\tiny] (e) at (3,-1) {END};
+            \begin{tikzpicture}[
+                node/.style={rectangle, draw, rounded corners, minimum width=2cm, minimum height=0.6cm, align=center, font=\tiny},
+                scale=0.85, transform shape
+            ]
+                \node[node, fill=blue!20] (start) at (0,4.5) {START};
+                \node[node, fill=green!20] (extract) at (0,3.5) {Extract\\Topic};
+                \node[node, fill=yellow!20] (decomp) at (0,2.5) {Decompose 3};
+                \node[node, fill=orange!20] (solver1) at (-2,1.5) {Solver};
+                \node[node, fill=orange!20] (solver2) at (0,1.5) {Python\\Solver};
+                \node[node, fill=orange!20] (solver3) at (2,1.5) {Solver};
+                \node[node, fill=purple!20] (combine) at (0,0.5) {Combine\\All};
+                \node[node, fill=red!20] (valid) at (0,-0.5) {Validator};
+                \node[node, fill=orange!20] (solver_retry) at (-2,-1.5) {Solver};
+                \node[node, fill=blue!20] (end) at (0,-2.5) {END};
                 
-                \draw[->, thick] (s) -- (d);
-                \draw[->, thick] (d) -- (s1);
-                \draw[->, thick] (d) -- (s2);
-                \draw[->, thick] (d) -- (s3);
-                \draw[->, thick] (s1) -- (c);
-                \draw[->, thick] (s2) -- (c);
-                \draw[->, thick] (s3) -- (c);
-                \draw[->, thick] (c) -- (v);
-                \draw[->, thick] (v) -- node[right, font=\tiny] {YES} (e);
-                \draw[->, thick] (v) -- node[above, font=\tiny] {NO} (sr);
-                \draw[->, thick] (sr) -- (e);
-                
-                \node[font=\tiny, align=center] at (6.5, 4) {Depth = 2\\Nodes = 9};
+                \draw[->, thick] (start) -- (extract);
+                \draw[->, thick] (extract) -- (decomp);
+                \draw[->, thick] (decomp) -- (solver1);
+                \draw[->, thick] (decomp) -- (solver2);
+                \draw[->, thick] (decomp) -- (solver3);
+                \draw[->, thick] (solver1) -- (combine);
+                \draw[->, thick] (solver2) -- (combine);
+                \draw[->, thick] (solver3) -- (combine);
+                \draw[->, thick] (combine) -- (valid);
+                \draw[->, thick] (valid) -- node[right, font=\tiny] {YES} (end);
+                \draw[->, thick] (valid) -- node[left, font=\tiny] {NO} (solver_retry);
+                \draw[->, thick] (solver_retry) -- (end);
             \end{tikzpicture}
-            
-            \vspace{0.3cm}
-            \centerline{\small Example generated graph}
         \end{column}
     \end{columns}
     
@@ -264,7 +263,7 @@
                 \item \textbf{Models:} GCN, GraphSAGE, GAT
                 \item \textbf{Virtual Node:} Connected to all nodes
                 \item \textbf{Message Passing:} 2-4 layers
-                \item \textbf{Output:} Score ∈ [0,1] via sigmoid
+                \item \textbf{Output:} Score $\in$ [0,1] via sigmoid
             \end{itemize}
             
             \vspace{0.3cm}
@@ -276,50 +275,40 @@
             \end{itemize}
         \end{column}
         \begin{column}{0.5\textwidth}
-            \begin{tikzpicture}[scale=0.85]
+            \begin{tikzpicture}[scale=0.5]
                 % Graph nodes (even smaller, left side)
-                \node[draw, circle, fill=blue!30, font=\tiny, minimum size=0.5cm] (n1) at (0,3.5) {Solv};
-                \node[draw, circle, fill=green!30, font=\tiny, minimum size=0.5cm] (n2) at (1,4) {Extr};
-                \node[draw, circle, fill=orange!30, font=\tiny, minimum size=0.5cm] (n3) at (1,3) {Dec};
-                \node[draw, circle, fill=purple!30, font=\tiny, minimum size=0.5cm] (n4) at (2,3.5) {Comb};
+                \node[draw, circle, fill=blue!30, font=\tiny, minimum size=0.5cm] (n1) at (0,4) {Dec};
+                \node[draw, circle, fill=green!30, font=\tiny, minimum size=0.5cm] (n2) at (0,2) {Extr};
+                \node[draw, circle, fill=orange!30, font=\tiny, minimum size=0.5cm] (n3) at (0,0) {Solv};
                 
                 % Graph edges
+                \draw[->, thick] (0,5.5) -- (n1);
                 \draw[->, thick] (n1) -- (n2);
                 \draw[->, thick] (n2) -- (n3);
-                \draw[->, thick] (n3) -- (n4);
+                \draw[->, thick] (n3) -- (0,-1.5);
+
+                % Virtual node
+                \node[draw, circle, fill=red!40, font=\small, minimum size=0.8cm, align=center] (vnode) at (5,2) {Virtual\\Node};
+
+                % Connections to virtual node
+                \draw[->, dashed, thick] (n1) -- (vnode);
+                \draw[->, dashed, thick] (n2) -- (vnode);
+                \draw[->, dashed, thick] (n3) -- (vnode);
+                \draw[->, dashed, thick] (0.5,5.5) -- (vnode);
+                \draw[->, dashed, thick] (0.5,-1.5) -- (vnode);
+
+                % Embedding to MLP
+                \node[draw, rectangle, fill=yellow!30, font=\small, minimum size=0.6cm, align=center] (vemb) at (10,2) {Virtual\\Embedding};
+                \draw[->, thick] (vnode) -- (vemb);
+                \node[draw, rectangle, fill=purple!30, font=\small, minimum size=0.6cm] (mlp) at (10,-1) {MLP};
+                \draw[->, thick] (vemb) -- (mlp);
+
+                % Output score
+                \node[draw, circle, fill=gray!30, font=\small, minimum size=0.6cm] (out) at (10,-4) {Score};
+                \draw[->, thick] (mlp) -- (out);
                 
-                % Virtual node (further right, larger)
-                \node[draw, circle, fill=red!30, thick, font=\small, minimum size=0.9cm] (vn) at (5.5,3.5) {Virtual\\Node};
                 
-                % Virtual node connections (dashed red lines to all graph nodes)
-                \draw[<->, dashed, thick, red] (vn) -- (n1);
-                \draw[<->, dashed, thick, red] (vn) -- (n2);
-                \draw[<->, dashed, thick, red] (vn) -- (n3);
-                \draw[<->, dashed, thick, red] (vn) -- (n4);
-                
-                % Label for graph nodes
-                \node[font=\scriptsize, align=center] at (1, 2) {Agent\\Graph};
-                
-                % Message passing layers annotation
-                \node[font=\scriptsize, align=center] at (3.5, 2.5) {Message\\Passing\\Layers};
-                \draw[->, very thick, blue] (3.5, 2.2) -- (3.5, 1.5);
-                
-                % Virtual node embedding (below virtual node)
-                \node[draw, rectangle, fill=red!20, font=\small, minimum width=1.4cm, minimum height=0.55cm] (emb) at (5.5, 1) {Virtual\\Embedding};
-                \draw[->, very thick] (vn) -- (emb);
-                
-                % MLP (below embedding)
-                \node[draw, rectangle, fill=yellow!30, font=\small, minimum width=1.4cm, minimum height=0.5cm] (mlp) at (5.5, -0.1) {MLP};
-                \draw[->, very thick] (emb) -- (mlp);
-                
-                % Output (lower position)
-                \node[draw, circle, fill=orange!40, font=\small] (out) at (5.5, -1.6) {0.87};
-                \draw[->, very thick] (mlp) -- (out);
-                \node[font=\tiny, align=center] at (5.5, -2.3) {Predicted\\Score};
             \end{tikzpicture}
-            
-            \vspace{0.2cm}
-            \centerline{\small GNN with virtual node architecture}
         \end{column}
     \end{columns}
     
@@ -356,49 +345,46 @@
             \end{itemize}
         \end{column}
         \begin{column}{0.5\textwidth}
-            \begin{tikzpicture}[scale=0.7]
+            \begin{tikzpicture}[scale=0.85]
                 % Selection visualization
                 \node[font=\footnotesize, align=center] at (0, 5) {\textbf{GNN Predictions}\\(1000-2000 graphs)};
                 
-                \foreach \i in {1,...,8} {
+                \foreach \i in {1,...,6} {
                     \node[draw, circle, fill=gray!20, inner sep=1pt, font=\tiny] at ({(\i-4.5)*0.5}, 4) {};
                 }
-                \node at (2.5, 4) {\ldots};
+                \node at (1.5, 4) {\ldots};
                 
-                \draw[->, very thick] (0, 3.5) -- (0, 3);
-                \node[font=\tiny] at (1, 3.25) {Sort by score};
+                
+                \node[font=\tiny] at (0.5, 3.25) {Sort by score};
                 
                 % Top candidates - arrow pointing to candidate pool
-                \node[draw, rectangle, fill=green!30, minimum width=2.5cm, font=\tiny] (top10) at (-0.5, 2.5) {Top 10 to\\candidate pool};
-                
+                \node[draw, rectangle, fill=green!30, minimum width=2.5cm, font=\tiny, align=center] (top10) at (-0.5, 2.5) {Top 10 to\\candidate pool};
+                \draw[->, very thick] (-0.5, 3.5) -- (top10.north);
+
                 % Candidate Pool visualization (further to the right)
-                \node[draw, rectangle, fill=green!10, minimum width=2.8cm, minimum height=2cm, font=\tiny, thick] (pool) at (4.5, 2.5) {};
+                \node[draw, rectangle, fill=green!10, minimum width=2.8cm, minimum height=2.7cm, font=\tiny, thick] (pool) at (4.5, 2.5) {};
                 \node[font=\tiny, align=center] at (4.5, 3.8) {\textbf{Candidate Pool}};
                 
                 % Graphs in pool with GNN scores
-                \node[draw, rectangle, fill=blue!20, font=\tiny, minimum width=2.2cm] at (4.5, 3.3) {Graph 1: GNN=0.89};
-                \node[draw, rectangle, fill=blue!20, font=\tiny, minimum width=2.2cm] at (4.5, 2.8) {Graph 2: GNN=0.85};
-                \node[draw, rectangle, fill=blue!20, font=\tiny, minimum width=2.2cm] at (4.5, 2.3) {Graph 3: GNN=0.82};
+                \node[draw, rectangle, fill=blue!20, font=\tiny, minimum width=2.4cm] at (4.5, 3.3) {Graph 1: GNN=0.89};
+                \node[draw, rectangle, fill=blue!20, font=\tiny, minimum width=2.4cm] at (4.5, 2.8) {Graph 2: GNN=0.85};
+                \node[draw, rectangle, fill=blue!20, font=\tiny, minimum width=2.4cm] at (4.5, 2.3) {Graph 3: GNN=0.82};
                 \node[font=\tiny] at (4.5, 1.9) {\vdots};
-                \node[draw, rectangle, fill=blue!20, font=\tiny, minimum width=2.2cm] at (4.5, 1.5) {Graph 10: GNN=0.71};
+                \node[draw, rectangle, fill=blue!20, font=\tiny, minimum width=2.4cm] at (4.5, 1.3) {Graph 10: GNN=0.71};
                 
                 % Arrow from top10 to pool
                 \draw[->, very thick] (top10.east) -- (pool.west);
-                
-                \draw[->, very thick] (-0.5, 2) -- (-0.5, 1.5);
-                
+
                 % Selected for evaluation
-                \node[draw, rectangle, fill=orange!30, minimum width=2.5cm, font=\tiny] at (-0.5, 1) {Top 5 for evaluation};
+                \node[draw, rectangle, fill=orange!30, minimum width=2.5cm, font=\tiny] (top5eval) at (-0.5, 1) {Top 5 for evaluation};
                 
-                \draw[->, very thick] (-0.5, 0.5) -- (-0.5, 0);
+                \draw[->, very thick] (top10.south) -- (top5eval.north);
                 
                 % LLM evaluation
-                \node[draw, cloud, fill=blue!20, minimum width=2cm, minimum height=1cm, font=\tiny, align=center] at (-0.5, -1) {LLM\\Evaluation};
-                
-                \node[font=\scriptsize, align=center] at (-0.5, -2.2) {5 math problems\\per graph};
-                
-                % Cost indicator
-                \node[draw, rectangle, fill=red!20, font=\tiny] at (-0.5, -3) {\$ \$ \$ Cost};
+                \node[draw, rectangle, fill=blue!20, minimum width=2cm, minimum height=1cm, font=\tiny, align=center] (llm) at (-0.5, -0.5) {LLM\\Evaluation};
+
+                \draw[->, very thick] (top5eval.south) -- (llm.north);
+
             \end{tikzpicture}
         \end{column}
     \end{columns}
@@ -438,39 +424,29 @@
             \end{itemize}
         \end{column}
         \begin{column}{0.5\textwidth}
-            \begin{tikzpicture}[scale=0.7]
+            \begin{tikzpicture}[scale=0.8]
                 % Training data growth
-                \foreach \i in {1,...,5} {
+                \foreach \i in {0,...,4} {
                     \draw[fill=blue!30] (0, \i*0.3) rectangle (1.5, \i*0.3+0.25);
                 }
                 \node[font=\tiny] at (0.75, -0.3) {Iteration 1};
                 
-                \foreach \i in {1,...,10} {
+                \foreach \i in {0,...,9} {
                     \draw[fill=blue!30] (2.5, \i*0.15) rectangle (4, \i*0.15+0.125);
                 }
                 \node[font=\tiny] at (3.25, -0.3) {Iteration 2};
                 
-                \foreach \i in {1,...,15} {
+                \foreach \i in {0,...,14} {
                     \draw[fill=blue!30] (5, \i*0.1) rectangle (6.5, \i*0.1+0.083);
                 }
                 \node[font=\tiny] at (5.75, -0.3) {Iteration 3};
                 
-                \node[font=\scriptsize, align=center] at (3.25, 2.5) {\textbf{Training Data Growth}};
-                
-                % GNN training process
-                \node[draw, rectangle, fill=green!20, minimum width=2cm, font=\tiny] at (1, 3.5) {Graph + Score};
-                \draw[->, thick] (2, 3.5) -- (3, 3.5);
-                \node[draw, rectangle, fill=blue!20, minimum width=1.5cm, font=\tiny] at (4, 3.5) {GNN};
-                \draw[->, thick] (4.75, 3.5) -- (5.5, 3.5);
-                \node[font=\tiny] at (6.5, 3.5) {Prediction};
-                
-                \node[font=\tiny] at (4, 4.2) {MSE Loss};
-                \draw[->, thick, red] (6.5, 3.7) .. controls (6.5, 4.5) and (4.75, 4.5) .. (4.75, 3.7);
-                \node[font=\tiny] at (5.75, 4.5) {Backprop};
+                \node[font=\scriptsize, align=center] at (3.25, 2) {\textbf{Training Data Growth}};
                 
                 % Improvement arrow
-                \draw[->, very thick, green] (0.5, 4.8) -- (6, 4.8);
-                \node[font=\scriptsize] at (3.25, 5.2) {Model Improves};
+                \draw[->, very thick, green] (0.5, -1) -- (6, -1);
+                \node[font=\scriptsize] at (3.25, -1.5) {Model Improves};
+                
             \end{tikzpicture}
         \end{column}
     \end{columns}
@@ -492,7 +468,7 @@
 % Slide 9: Random Baseline Distribution
 \begin{frame}{Random Baseline: Understanding the Distribution}
     \begin{columns}[T]
-        \begin{column}{0.5\textwidth}
+        \begin{column}{0.55\textwidth}
             \textbf{Establishing a Baseline:}
             \begin{itemize}
                 \item Generated 5M random graphs
@@ -501,16 +477,12 @@
                 \item Analyzed score distribution
             \end{itemize}
             
-            \vspace{0.5cm}
             \textbf{Observed: Bimodal Distribution}
             \begin{itemize}
-                \item Two distinct clusters
-                \item Good graphs ($>0.5$ accuracy)
-                \item Poor graphs ($<0.3$ accuracy)
+                \item Two clusters: good ($>0.5$) and poor ($<0.3$)
                 \item Simple distributions insufficient
             \end{itemize}
-            
-            \vspace{0.5cm}
+
             \textbf{Solution: Gaussian Mixture Model}
             \begin{itemize}
                 \item GMM with 2 components
@@ -519,7 +491,7 @@
                 \item Baseline for comparison
             \end{itemize}
         \end{column}
-        \begin{column}{0.5\textwidth}
+        \begin{column}{0.45\textwidth}
             \centering
             \includegraphics[width=\textwidth]{score_distribution.png}
             
@@ -543,26 +515,14 @@
 % Slide 10: GNN Models and Hyperparameters
 \begin{frame}{GNN Models: Architecture Details}
     \begin{columns}[T]
-        \begin{column}{0.5\textwidth}
+        \begin{column}{0.6\textwidth}
             \textbf{Three GNN Architectures:}
             \begin{enumerate}
                 \item \textbf{GCN} (Graph Convolutional Network)
-                \begin{itemize}
-                    \item Simple spectral convolution
-                    \item Fast and efficient
-                \end{itemize}
                 
                 \item \textbf{GraphSAGE}
-                \begin{itemize}
-                    \item Neighborhood sampling
-                    \item Inductive learning
-                \end{itemize}
                 
                 \item \textbf{GAT} (Graph Attention Network)
-                \begin{itemize}
-                    \item Attention mechanisms
-                    \item Weighted aggregation
-                \end{itemize}
             \end{enumerate}
             
             \vspace{0.3cm}
@@ -573,46 +533,29 @@
                 \item Dropout: [0.0, 0.1, 0.2, 0.5]
             \end{itemize}
         \end{column}
-        \begin{column}{0.5\textwidth}
-            \begin{tikzpicture}[scale=0.8]
-                % Layer-by-layer visualization
-                \node[font=\scriptsize] at (0, 5) {\textbf{Message Passing Layers}};
-                
+        \begin{column}{0.4\textwidth}
+            \begin{tikzpicture}[scale=1.0]
                 % Layer 1
-                \node[draw, rectangle, fill=blue!20, minimum width=3cm, minimum height=0.6cm, font=\tiny] (l1) at (0, 4) {Layer 1: Node Features (15 dim)};
-                
-                \draw[->, thick] (0, 3.7) -- (0, 3.3);
-                \node[font=\tiny] at (1.5, 3.5) {Aggregate};
-                
+                \node[draw, rectangle, fill=green!20, minimum width=3.4cm, minimum height=0.5cm, font=\tiny] (l1) at (0, 4) {Layer 1: Node Features (15 dim)};
+                \node[draw, rectangle, fill=blue!20, minimum width=2cm, minimum height=0.5cm, font=\tiny] (r1) at (0, 3.5) {ReLU};
+                \node[draw, rectangle, fill=purple!20, minimum width=2cm, minimum height=0.5cm, font=\tiny] (d1) at (0, 3) {Dropout};
                 % Layer 2
-                \node[draw, rectangle, fill=green!20, minimum width=3cm, minimum height=0.6cm, font=\tiny] (l2) at (0, 3) {Layer 2: Hidden (8-32 dim)};
-                
-                \draw[->, thick] (0, 2.7) -- (0, 2.3);
-                \node[font=\tiny] at (1.5, 2.5) {Aggregate};
-                
+                \node[draw, rectangle, fill=green!20, minimum width=3.4cm, minimum height=0.5cm, font=\tiny] (l2) at (0, 2.5) {Layer 2: Hidden (4-32 dim)};
+                \node[draw, rectangle, fill=blue!20, minimum width=2cm, minimum height=0.5cm, font=\tiny] (r2) at (0, 2) {ReLU};
+                \node[draw, rectangle, fill=purple!20, minimum width=2cm, minimum height=0.5cm, font=\tiny] (d2) at (0, 1.5) {Dropout};
                 % Layer 3
-                \node[draw, rectangle, fill=green!20, minimum width=3cm, minimum height=0.6cm, font=\tiny] (l3) at (0, 2) {Layer 3: Hidden (8-32 dim)};
-                
-                \draw[->, thick] (0, 1.7) -- (0, 1.3);
-                \node[font=\tiny] at (1.5, 1.5) {Aggregate};
-                
-                % Layer 4
-                \node[draw, rectangle, fill=green!20, minimum width=3cm, minimum height=0.6cm, font=\tiny] (l4) at (0, 1) {Layer 4: Hidden (8-32 dim)};
-                
-                \draw[->, thick] (0, 0.7) -- (0, 0.3);
-                
-                % Virtual node readout
-                \node[draw, rectangle, fill=red!20, minimum width=3cm, minimum height=0.6cm, font=\tiny] (vn) at (0, 0) {Virtual Node Embedding};
-                
-                \draw[->, thick] (0, -0.3) -- (0, -0.7);
-                
+                \node[draw, rectangle, fill=green!20, minimum width=3.4cm, minimum height=0.5cm, font=\tiny] (l3) at (0, 1) {Layer 3: Hidden (4-32 dim)};
+                \node[draw, rectangle, fill=blue!20, minimum width=2cm, minimum height=0.5cm, font=\tiny] (r3) at (0, 0.5) {ReLU};
+                \node[draw, rectangle, fill=purple!20, minimum width=2cm, minimum height=0.5cm, font=\tiny] (d3) at (0, 0) {Dropout};
                 % MLP
-                \node[draw, rectangle, fill=yellow!20, minimum width=3cm, minimum height=0.6cm, font=\tiny] (mlp) at (0, -1) {MLP + Sigmoid};
-                
-                \draw[->, thick] (0, -1.3) -- (0, -1.7);
+                \node[draw, rectangle, fill=yellow!20, minimum width=3cm, minimum height=0.5cm, font=\tiny] (mlp) at (0, -0.5) {MLP + Sigmoid};
                 
                 % Output
-                \node[draw, circle, fill=orange!30, font=\scriptsize] (out) at (0, -2) {0.87};
+                \node[draw, circle, fill=orange!30, font=\scriptsize] (out) at (0, -1.5) {Score};
+
+                % Arrow
+                \draw[->, thick] (mlp.south) -- (out.north);
+
             \end{tikzpicture}
         \end{column}
     \end{columns}
@@ -665,9 +608,6 @@
             \alert{GraphSAGE performs best!}
         \end{column}
         \begin{column}{0.5\textwidth}
-            \includegraphics[width=\textwidth]{../hyperparameter_search/hyperparameter_processing.ipynb}
-            
-            \vspace{0.3cm}
             \centering
             \textbf{Key Insights:}
             \begin{itemize}
@@ -758,18 +698,10 @@
                 \item Reduces exploration of search space
                 \item Selection bias accumulates
             \end{itemize}
-            
-            \vspace{0.5cm}
-            \textbf{Despite this limitation:}
-            \begin{itemize}
-                \item \alert{Still massively outperforms random search}
-                \item 99.9975\% cost reduction maintained
-                \item Identifies high-performing topologies
-            \end{itemize}
         \end{column}
         \begin{column}{0.5\textwidth}
             \centering
-            \includegraphics[width=\textwidth]{../logs/analytics/more-agents-real-llm-v4-bestGCN/metric_trends.png}
+            \includegraphics[width=0.6\textwidth]{../logs/analytics/more-agents-real-llm-v4-bestGCN/metric_trends.png}
             
             \vspace{0.3cm}
             \small
@@ -812,11 +744,6 @@
                 \item \alert{GCN:} Strong performance (0.69 avg)
                 \item All models significantly beat random
             \end{itemize}
-            
-            \vspace{0.3cm}
-            \textbf{Cost Reduction:}
-            \\Evaluate 150 instead of 6M graphs
-            \\\alert{99.9975\% reduction!}
         \end{column}
         \begin{column}{0.5\textwidth}
             \centering
@@ -827,7 +754,7 @@
             
             \vspace{0.3cm}
             \small
-            Random baseline (gray) vs GNN-guided search (colored)
+            Random baseline (red) vs GNN-guided search (blue)
         \end{column}
     \end{columns}
     
@@ -854,7 +781,8 @@
                 \item Fixed evaluation budget
             \end{itemize}
             
-            \vspace{0.5cm}
+        \end{column}
+        \begin{column}{0.5\textwidth}
             \textbf{Future Directions:}
             \begin{enumerate}
                 \item \textbf{Mitigate Bias:}
@@ -876,24 +804,6 @@
                     \item Full eval only for promising graphs
                 \end{itemize}
             \end{enumerate}
-        \end{column}
-        \begin{column}{0.5\textwidth}
-            \begin{tikzpicture}[scale=0.8]
-                % Feedback loop illustration
-                \node[draw, rectangle, fill=blue!20, minimum width=2.5cm, font=\small] (gnn) at (0, 3) {GNN Prediction};
-                \node[draw, rectangle, fill=green!20, minimum width=2.5cm, font=\small] (sel) at (0, 1.5) {Selection};
-                \node[draw, rectangle, fill=orange!20, minimum width=2.5cm, font=\small] (eval) at (0, 0) {Evaluation};
-                
-                \draw[->, very thick] (gnn) -- (sel);
-                \draw[->, very thick] (sel) -- (eval);
-                \draw[->, very thick, red] (eval) to[bend right=45] node[right, font=\tiny] {Bias!} (gnn);
-                
-                \node[font=\scriptsize, align=center] at (3, 1.5) {\textbf{Bias Loop:}\\Model selects\\what it knows\\→ learns only\\those patterns};
-                
-                % Solution illustration
-                \node[draw, star, star points=5, fill=yellow!30, minimum width=2cm, font=\small] at (0, -2) {Solution};
-                \node[font=\tiny, align=center] at (0, -2.8) {Balanced\\Sampling};
-            \end{tikzpicture}
         \end{column}
     \end{columns}
     
