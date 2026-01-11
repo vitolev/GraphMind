@@ -378,7 +378,7 @@
                 % Selected for evaluation
                 \node[draw, rectangle, fill=orange!30, minimum width=2.5cm, font=\tiny] (top5eval) at (-0.5, 1) {Top 5 for evaluation};
                 
-                \draw[->, very thick] (top10.south) -- (top5eval.north);
+                \draw[->, very thick] (2.85, 1) -- (top5eval.east);
                 
                 % LLM evaluation
                 \node[draw, rectangle, fill=blue!20, minimum width=2cm, minimum height=1cm, font=\tiny, align=center] (llm) at (-0.5, -0.5) {LLM\\Evaluation};
